@@ -90,6 +90,7 @@ Node.js HTTP server, CodeMirror 6 frontend and Tauri desktop shell.
 ```bash
 npm run build       # bundle frontend
 npm run check       # build and tests
+npm run test:editor # browser checks for generation editing and cursor placement; needs Puppeteer
 npm run desktop     # desktop development; requires Rust and Tauri prerequisites
 ```
 

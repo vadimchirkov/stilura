@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import { build } from 'esbuild';
+import { loadPuppeteer } from './browser-driver.mjs';
 
-const require = createRequire(import.meta.url);
-const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer');
+const puppeteer = loadPuppeteer();
 const source = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
 const section = source.slice(source.indexOf('let generationJob = null;'), source.indexOf('// ─── Read-only compartment'));
 const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
