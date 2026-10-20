@@ -38,7 +38,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "writing-rules.js"
+        "writing-rules.js",
+        "editor-ui.js"
       ],
       "matches": [
         "http://*/*",

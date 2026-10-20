@@ -1,4 +1,5 @@
-import { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, ghostRemainder, distinctVariants } from '../extension/writing-rules.js';
+import { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, ghostRemainder, distinctVariants, reviewAction, rewriteInstruction } from '../extension/writing-rules.js';
+import { EDITOR_UI_CSS, createPassageInput, createGenerationLoader } from '../extension/editor-ui.js';
 // src/app.js — Stilura frontend (CodeMirror 6)
 
 import {
@@ -37,6 +38,8 @@ import { liveDocument } from './live.js';
 import { BRIEF_STEPS, validateBriefQuestions, validateBriefUpdate } from '../brief.js';
 
 async function main() {
+const editorStyle = document.createElement('style');
+editorStyle.textContent = EDITOR_UI_CSS; document.head.append(editorStyle);
 let liveSync = null;
 const desktop = new URLSearchParams(location.search).get('shell') === 'desktop';
 const localStorage = await openStorage({
@@ -1355,37 +1358,26 @@ const setGenerationFx = StateEffect.define();
 class GenerationWidget extends WidgetType {
   constructor(value) { super(); this.value = value; }
   eq(other) { return this.value.job === other.value.job && this.value.text === other.value.text && this.value.phase === other.value.phase && this.value.inline === other.value.inline && this.value.previousText === other.value.previousText; }
-  toDOM() {
+  toDOM(view) {
     const wrap = document.createElement(this.value.inline ? 'span' : 'div');
     wrap.className = 'cm-generation';
+    wrap.addEventListener('mousedown', event => {
+      if (this.value.phase !== 'review') return;
+      event.preventDefault(); event.stopPropagation();
+      const point = document.caretPositionFromPoint?.(event.clientX, event.clientY);
+      const caret = point ? { startContainer: point.offsetNode, startOffset: point.offset }
+        : document.caretRangeFromPoint?.(event.clientX, event.clientY);
+      const text = wrap.querySelector('.cm-suggest');
+      let offset = this.value.text.length;
+      if (caret && text?.contains(caret.startContainer)) {
+        const range = document.createRange(); range.selectNodeContents(text);
+        range.setEnd(caret.startContainer, caret.startOffset); offset = Math.min(offset, range.toString().length);
+      }
+      editGeneration(view, offset); view.focus();
+    });
     wrap.setAttribute('aria-busy', String(this.value.phase === 'streaming'));
     if (this.value.phase === 'streaming' && (!this.value.text || this.value.previousText != null)) {
-      const loader = document.createElement('span');
-      loader.className = 'generation-loading';
-      loader.setAttribute('role', 'status');
-      const grid = document.createElement('span');
-      grid.className = 'generation-pixels';
-      grid.setAttribute('aria-hidden', 'true');
-      for (let i = 0; i < 9; i++) {
-        const cell = document.createElement('span');
-        cell.style.setProperty('--cell-delay', String((i % 3 + Math.abs(Math.floor(i / 3) - 1)) * 90));
-        grid.append(cell);
-      }
-      const label = document.createElement('span');
-      label.className = 'generation-loading-label';
-      label.textContent = this.value.previousText != null ? 'Rewriting' : 'Writing';
-      const elapsed = document.createElement('span');
-      elapsed.className = 'generation-elapsed';
-      elapsed.setAttribute('aria-hidden', 'true');
-      const startedAt = this.value.startedAt ?? Date.now();
-      const tick = () => {
-        const seconds = Math.max(0, Date.now() - startedAt) / 1000;
-        elapsed.textContent = seconds < 60 ? `${seconds.toFixed(1)}s` : `${Math.floor(seconds / 60)}m ${(seconds % 60).toFixed(1)}s`;
-      };
-      tick();
-      this.timer = setInterval(tick, 100);
-      loader.append(grid, label, elapsed);
-      wrap.append(loader);
+      wrap.append(createGenerationLoader(document));
     }
     if (this.value.text) {
       const text = document.createElement(this.value.inline ? 'span' : 'div');
@@ -1396,7 +1388,6 @@ class GenerationWidget extends WidgetType {
     }
     return wrap;
   }
-  destroy() { clearInterval(this.timer); }
   coordsAt(dom) {
     const text = dom.querySelector('.cm-suggest')?.firstChild;
     if (!text || this.value.previousText != null) {
@@ -1469,6 +1460,34 @@ function generationKey(view, action) {
   return true;
 }
 
+function editGeneration(view, offset) {
+  const target = view.state.field(generationField);
+  if (!target || target.phase !== 'review') return false;
+  const selection = view.state.selection.main;
+  if (offset === undefined && (selection.from < target.from || selection.to > target.to)) return false;
+  reviewGeneration(view, 'Accept', target.job);
+  if (view.state.field(generationField)) return false;
+  view.dispatch({ selection: { anchor: target.from + Math.min(offset ?? target.text.length, target.text.length) } });
+  return true;
+}
+
+const generationInput = [EditorView.domEventHandlers({
+  keydown(event, view) {
+    const target = view.state.field(generationField), selection = view.state.selection.main;
+    if (!target || selection.from < target.from || selection.to > target.to) return false;
+    const action = reviewAction(event, target.variants?.length);
+    if (action === 'Edit') { editGeneration(view); return false; }
+    return action ? generationKey(view, action) : false;
+  },
+  compositionstart(_event, view) { editGeneration(view); return false; },
+}), EditorView.inputHandler.of((view, from, to, text) => {
+  const target = view.state.field(generationField);
+  if (!target || from < target.from || to > target.to || !editGeneration(view)) return false;
+  const at = view.state.selection.main.head;
+  view.dispatch({ changes: { from: at, insert: text }, selection: { anchor: at + text.length }, userEvent: 'input.type' });
+  return true;
+})];
+
 function handleWrite(view) {
   const selection = view.state.selection.main;
   if (!selection.empty || view.state.readOnly || view.composing) return false;
@@ -1512,7 +1531,7 @@ async function generateFromLine(view, line, instruction) {
   const job = startJob();
   generationJob = job;
   cancelSuggestion();
-  view.dispatch({ effects: [clearGhostFx.of(null), setGenerationFx.of({ from: line.from, to: line.to, quote: line.text, text: previousText ?? '', previousText, instruction, key, inline, phase: 'streaming', job, startedAt: Date.now() }),
+  view.dispatch({ effects: [clearGhostFx.of(null), setGenerationFx.of({ from: line.from, to: line.to, quote: line.text, text: previousText ?? '', previousText, instruction, key, inline, phase: 'streaming', job }),
     EditorView.announce.of('Generating text. Escape stops generation.')] });
   // The preview stays outside the saved draft until the author accepts it.
   const current = () => !job.signal.aborted && documentKey === key && !loadingDocument && !savePaused
@@ -1547,7 +1566,7 @@ async function generateFromLine(view, line, instruction) {
     if (!current()) return;
     if (!answer.trim()) throw new Error('The model returned no text.');
     view.dispatch({ effects: [setGenerationFx.of({ ...view.state.field(generationField), text: answer.trim(), previousText: null, phase: 'review' }),
-      EditorView.announce.of('Suggestion ready. Tab accepts, Escape dismisses, R regenerates.')] });
+      EditorView.announce.of('Suggestion ready. Click or type to edit. Tab accepts, Escape dismisses, R regenerates.')] });
   } catch (error) {
     if (!job.signal.aborted) {
       const problem = modelError(error);
@@ -1615,14 +1634,17 @@ function closePassage(view) {
 }
 
 function passageTooltip(view) {
-  const dom = chatEl('form', 'passage-panel');
-  dom.setAttribute('aria-label', 'Selected passage');
-  const input = chatEl('textarea', 'passage-input');
-  input.rows = 1; input.maxLength = 4000;
-  const fit = () => { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; };
-  input.setAttribute('aria-label', 'Passage request');
-  input.setAttribute('aria-description', 'Enter sends, Shift+Enter adds a line, Escape closes.');
-  dom.append(input);
+  const { dom, input, fit } = createPassageInput({
+    onSubmit: () => { void requestPassage(view); },
+    onChange: instruction => {
+      const value = view.state.field(passageField);
+      if (value && !value.busy) view.dispatch({ effects: setPassageFx.of({ ...value, instruction, answer: '' }) });
+    },
+    onClose: () => {
+      if (passageJob) passageJob.abort(); else closePassage(view);
+      view.focus();
+    },
+  });
   const render = () => {
     const value = view.state.field(passageField);
     if (!value) return;
@@ -1631,22 +1653,6 @@ function passageTooltip(view) {
     input.readOnly = value.busy;
     input.setAttribute('aria-busy', String(value.busy));
   };
-  input.addEventListener('input', () => {
-    fit();
-    const value = view.state.field(passageField);
-    if (value && !value.busy) view.dispatch({ effects: setPassageFx.of({ ...value, instruction: input.value, answer: '' }) });
-  });
-  input.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void requestPassage(view); }
-  });
-  dom.addEventListener('submit', event => { event.preventDefault(); void requestPassage(view); });
-  dom.addEventListener('keydown', event => {
-    if (event.key === 'Escape') {
-      event.preventDefault(); event.stopPropagation();
-      if (passageJob) passageJob.abort(); else closePassage(view);
-      view.focus();
-    }
-  });
   // A press anywhere else puts the field away. Not blur: a replacement
   // preview hands focus to the editor on purpose, and its own buttons
   // (inside .cm-generation) must still work.
@@ -1674,8 +1680,7 @@ async function requestPassage(view, previous = null) {
   try {
     if (!await ensureAgent() || !current()) return;
     target = view.state.field(passageField);
-    let instruction = target.instruction;
-    if (previous) instruction += `\nReplace the previous candidate with different wording, preserving the request and facts. Previous candidate:\n${previous}`;
+    const instruction = rewriteInstruction(target.instruction, previous);
     const response = await fetch('/ask', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: job.signal,
       body: JSON.stringify({ document: view.state.doc.toString(), selected: target.quote, from: target.from,
@@ -1697,7 +1702,7 @@ async function requestPassage(view, previous = null) {
       text: variants[0], variants, index: 0, source: 'passage', instruction: target.instruction,
       key: target.key, inline: true, phase: 'review', job }),
       setPassageFx.of({ ...live, answer: data.answer || '' }),
-      EditorView.announce.of('Suggestion ready. Tab accepts, Escape dismisses, R regenerates.')],
+      EditorView.announce.of('Suggestion ready. Click or type to edit. Tab accepts, Escape dismisses, R regenerates.')],
       selection: { anchor: live.to } });
     view.focus();
     notify('Tab accepts · R regenerates · Esc dismisses', { sticky: true, key: 'passage-hint' });
@@ -3738,7 +3743,6 @@ const workView = new EditorView({
           // Tab accepts a suggestion; otherwise it moves focus normally.
           key: 'Tab',
           run(view) {
-            if (generationKey(view, 'Accept')) return true;
             if (ghostAccept(view)) return true;
             return false; // Native Tab navigation when no suggestion is present.
           },
@@ -3749,7 +3753,6 @@ const workView = new EditorView({
           run(view) {
             if (generationJob) { generationJob.abort(); return true; }
             if (passageJob) { passageJob.abort(); return true; }
-            if (generationKey(view, 'Reject')) return true;
             if (view.state.field(passageField)) { closePassage(view); return true; }
             const ghost = view.state.field(ghostField);
             const pending = suggestTimer !== null || suggestAbort !== null;
@@ -3770,13 +3773,7 @@ const workView = new EditorView({
         },
       ])),
 
-      Prec.high(keymap.of([
-        { key: 'Enter', run: handleWrite },
-        { key: 'ArrowDown', run: view => generationKey(view, 'Next') },
-        { key: 'ArrowUp', run: view => generationKey(view, 'Previous') },
-        { key: 'r', run: view => generationKey(view, 'Regenerate') },
-        { key: 'Alt-Enter', run: view => generationKey(view, 'Regenerate') },
-      ])),
+      Prec.high(keymap.of([{ key: 'Enter', run: handleWrite }])),
 
       // Standard text-editing and history keymaps
       keymap.of([...searchKeymap, ...historyKeymap, ...defaultKeymap]),
@@ -3791,6 +3788,7 @@ const workView = new EditorView({
       // Ghost text state + decoration provider
       ghostField,
       generationField,
+      Prec.highest(generationInput),
       requestField,
       passageField,
       markdownField,

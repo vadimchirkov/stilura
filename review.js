@@ -84,6 +84,21 @@ export function trimOverlap(prefix, suggestion) {
   return suggestion.slice(boundaryOverlap(prefix, suggestion).right);
 }
 
+// Only the passage inside the envelope may reach a streaming draft preview.
+export function generationText(raw, complete = false) {
+  const open = '<stilura-text>', close = '</stilura-text>';
+  const start = raw.indexOf(open), end = start < 0 ? -1 : raw.indexOf(close, start + open.length);
+  if (complete && (start < 0 || end < 0)) throw new Error('The model returned an invalid passage format. Try again.');
+  if (start < 0) return '';
+  let text = raw.slice(start + open.length, end < 0 ? undefined : end);
+  if (end < 0) {
+    for (let n = close.length - 1; n > 0; n--) {
+      if (text.endsWith(close.slice(0, n))) { text = text.slice(0, -n); break; }
+    }
+  }
+  return text;
+}
+
 // Only remove verbatim context echoes. Short reused phrases remain valid prose.
 export function insertionText(before, text, after = '') {
   text = trimOverlap(before, text.trim()).trimStart();

@@ -2,6 +2,24 @@
 export const SUGGEST_DELAY = 200;
 export const SUGGEST_MIN = 15;
 
+export function rewriteInstruction(instruction, previous) {
+  return previous ? `${instruction}\nReplace the previous candidate with different wording, preserving the request and facts. Previous candidate:\n${previous}` : instruction;
+}
+
+export function reviewAction(event, variants = 1) {
+  if (event.isComposing) return null;
+  const { key, shiftKey, ctrlKey, metaKey, altKey } = event;
+  if (key === 'Escape') return 'Reject';
+  if (!shiftKey && !ctrlKey && !metaKey) {
+    if (key === 'Tab' && !altKey) return 'Accept';
+    if ((key === 'r' && !altKey) || (key === 'Enter' && altKey)) return 'Regenerate';
+    if (variants > 1 && !altKey && key === 'ArrowDown') return 'Next';
+    if (variants > 1 && !altKey && key === 'ArrowUp') return 'Previous';
+  }
+  if (!altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Backspace', 'Delete', 'Enter'].includes(key)) return 'Edit';
+  return key.length === 1 && !ctrlKey && !metaKey && !altKey ? 'Edit' : null;
+}
+
 export function paragraphEnd(text, cursor) {
   if (cursor < 0 || cursor > text.length || (cursor < text.length && text[cursor] !== '\n')) return false;
   const next = text.indexOf('\n', cursor + 1);

@@ -1,3 +1,4 @@
+import { createGenerationLoader, createPassageInput } from '../extension/editor-ui.js';
 import * as writingRules from '../extension/writing-rules.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,7 +14,7 @@ function setup(beforeDone = async () => {}) {
   const jobs = new Set(), notices = [], requests = [], snapshots = [];
   const view = { composing: false };
   const context = vm.createContext({
-    ...writingRules,
+    ...writingRules, createGenerationLoader, createPassageInput,
     EditorState, StateField, StateEffect, EditorView, Decoration, WidgetType, isolateHistory,
     AbortController, documentKey: 'draft', loadingDocument: false, savePaused: false, jobs,
     clearGhostFx: StateEffect.define(), cancelSuggestion() {},
@@ -170,44 +171,34 @@ for (const blocked of ['inside', 'paused', 'readonly', 'switch']) {
   assert.equal(test.snapshots.length, 0, blocked);
 }
 
-// Waiting uses a Drive grid and elapsed clock; streamed/review text needs no timer.
+// Waiting and regeneration show only the shared pixel loader.
 {
-  const test = setup(), timers = new Map();
-  let now = 1000, timerId = 0;
-  test.context.Date = { now: () => now };
-  test.context.setInterval = (tick, delay) => { assert.equal(delay, 100); timers.set(++timerId, tick); return timerId; };
-  test.context.clearInterval = id => timers.delete(id);
+  const test = setup();
   test.context.document = { createElement: tag => ({ tag, children: [], attributes: {}, textContent: '',
     style: { setProperty(key, value) { this[key] = value; } },
     setAttribute(key, value) { this.attributes[key] = value; },
+    addEventListener() {},
     append(...children) { this.children.push(...children); },
   }) };
   const Widget = vm.runInContext('GenerationWidget', test.context);
-  const waiting = new Widget({ job: {}, phase: 'streaming', text: '', startedAt: 1000 });
-  const dom = waiting.toDOM(), [grid, label, clock] = dom.children[0].children;
+  const waiting = new Widget({ job: {}, phase: 'streaming', text: '' });
+  const dom = waiting.toDOM(), [grid] = dom.children[0].children;
   assert.equal(dom.attributes['aria-busy'], 'true');
   assert.equal(grid.attributes['aria-hidden'], 'true');
   assert.deepEqual(grid.children.map(cell => cell.style['--cell-delay']), ['90', '180', '270', '0', '90', '180', '90', '180', '270']);
-  assert.equal(label.textContent, 'Writing');
-  assert.equal(clock.attributes['aria-hidden'], 'true', 'clock ticks must not become live announcements');
-  assert.equal(clock.textContent, '0.0s');
-  now = 62200; timers.get(waiting.timer)();
-  assert.equal(clock.textContent, '1m 1.2s');
-  waiting.destroy();
-  assert.equal(timers.size, 0, 'removing a loading widget stops its clock');
+  assert.equal(dom.children[0].children.length, 1, 'loader contains only the pixel grid');
+  assert.equal(dom.children[0].attributes['aria-label'], 'Generating text');
 
-  const regeneration = { job: {}, phase: 'streaming', text: 'Previous', previousText: 'Previous', startedAt: now };
+  const regeneration = { job: {}, phase: 'streaming', text: 'Previous', previousText: 'Previous' };
   const regenerating = new Widget(regeneration), regen = regenerating.toDOM();
-  assert.equal(regen.children[0].children[1].textContent, 'Rewriting');
+  assert.equal(regen.children[0].children.length, 1);
   assert.equal(regen.children[1].textContent, 'Previous');
   assert(!regenerating.eq(new Widget({ ...regeneration, previousText: null })), 'first tokens remove the loader even when they repeat the old text');
-  regenerating.destroy();
 
   for (const phase of ['streaming', 'review']) {
     const text = new Widget({ job: {}, phase, text: 'Ready' }).toDOM();
     assert.equal(text.children.length, 1);
     assert.equal(text.children[0].className, 'cm-suggest');
-    assert.equal(timers.size, 0, 'visible output has no loading clock');
   }
   const inline = new Widget({ job: {}, phase: 'review', text: 'First line.\nSecond line.', inline: true });
   assert.equal(inline.toDOM().tag, 'span');

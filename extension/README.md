@@ -2,11 +2,11 @@
 
 Three writing actions backed by the local Stilura app:
 
-- Select text → **Rewrite** → describe the change or ask a question. Replacements use the same `/ask` endpoint as the app; explanations leave the field unchanged.
-- Type `/instructions` → **Enter** → streamed preview beside the command. **⌘/Ctrl + Enter** and **Generate** also work. The command remains intact until acceptance.
+- Select text → **Rewrite** → type a request into the single input. **Enter** sends, **Shift + Enter** adds a line, **Esc** closes. Replacements use the same `/ask` endpoint as the app; explanations leave the field unchanged.
+- Type `/instructions` → **Enter** → streamed preview inside the field. The slash disappears visually as you type; the request and result use a blue highlight. **⌘/Ctrl + Enter** also works. The underlying field stays unchanged until **Tab** accepts or you click/type to edit the result; **Esc** restores the command.
 - Pause at a paragraph end → gray continuation at the cursor. No popover interrupts typing. Matching typed characters consume the suggestion and keep its remainder.
 
-**Tab** accepts a replacement or continuation. **R** or **Alt + Enter** regenerates a replacement. **↑/↓** switches available variants. **Esc** dismisses. Failed or cancelled regeneration restores the previous candidate. Focus returns to the field after a response.
+**Tab** accepts a replacement or continuation. Clicking a completed replacement or typing into it accepts it and opens normal editing at the caret. **R** or **Alt + Enter** regenerates a replacement. **↑/↓** switches available variants. **Esc** dismisses. Failed or cancelled regeneration restores the previous candidate. Focus returns to the field after a response.
 
 **⌘/Ctrl + Enter** requests a continuation when there is no selection or slash command, including when automatic suggestions are off.
 
@@ -27,9 +27,9 @@ Text/search/URL/telephone inputs, textareas and basic contenteditable fields, in
 
 Complex editors (CodeMirror, Monaco, ProseMirror, Slate, Lexical, Google Docs and similar products) need dedicated adapters and are not supported in this version. Recognized rich editor roots and embedded non-text content are skipped. Browser-protected pages are unavailable. Fields over 60,000 characters are skipped.
 
-Plain Enter launches generation only after a slash was typed in the current field and the “Enter to generate” cue is visible. Pasted commands use ⌘/Ctrl + Enter or Generate; Escape exits command mode. Tab is intercepted only while a completed suggestion is ready; Shift+Tab retains normal navigation.
+Plain Enter launches generation only after a slash was typed in the current field. Pasted commands use ⌘/Ctrl + Enter; Escape exits command mode. Tab is intercepted only while a completed suggestion is ready; Shift+Tab retains normal navigation.
 
-Native fields cannot host CodeMirror widgets: generation and replacement previews appear beside the cursor/selection. Ordinary contenteditable markup is preserved when applying a selection. App and extension share command parsing, paragraph eligibility, the 200 ms / 15-character suggestion threshold, type-through rules and replacement deduplication. The server supplies the same author style; document-specific app briefs and notes are not copied into browser fields.
+Generation and replacement previews cover the original range inside the field, without action buttons. The preview follows field typography, wrapping and scrolling; long results can be scrolled before acceptance. Ordinary contenteditable markup is preserved when applying a selection. App and extension share command parsing, paragraph eligibility, the 200 ms / 15-character suggestion threshold, type-through rules and replacement deduplication. The server supplies the same author style; document-specific app briefs and notes are not copied into browser fields.
 
 ## Privacy and controls
 
@@ -42,3 +42,9 @@ The connection token stays in trusted extension storage, outside content scripts
 `npm run check` includes server authentication and route-isolation checks. `npm run test:extension` loads the real extension in a disposable Google Chrome profile against the existing local fake-model fixture. It requires Playwright available to Node; set `PLAYWRIGHT_MODULE` to an installed Playwright package path if it lives outside this repo. `CHROME_PATH` can select a Chrome binary; the default is the macOS Google Chrome installation. No real provider credentials are used in this test.
 
 Run `EXTENSION_QWEN=1 npm run test:extension` to repeat the three core flows with the configured local Qwen instead of the fixture. This uses synthetic Russian text, a disposable Chrome profile and a temporary draft path, and verifies that browser text is not saved there.
+
+## Shared editor code
+
+Both frontends import `extension/writing-rules.js` for command parsing, continuation eligibility, review keys, variant validation and regeneration instructions. `extension/editor-ui.js` owns the rewrite input, pixel loader and their CSS, including skeletons and reduced motion. Change these modules to update both editors.
+
+`src/app.js` adapts these controls to CodeMirror; `extension/content.js` adapts them to native fields and contenteditable. Positioning, selection, applying edits, undo and cancellation stay with their editor APIs. Requests and model prompts are shared by the server in `index.js` and `tasks.js`.

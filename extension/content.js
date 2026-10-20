@@ -1,9 +1,11 @@
 (async () => {
   if (document.documentElement.dataset.stiluraExtension) return;
   document.documentElement.dataset.stiluraExtension = '1';
-  const { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, ghostRemainder, distinctVariants } = await import(chrome.runtime.getURL('writing-rules.js'));
+  const { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, ghostRemainder, distinctVariants, reviewAction, rewriteInstruction } = await import(chrome.runtime.getURL('writing-rules.js'));
+  const { EDITOR_UI_CSS, createPassageInput, createGenerationLoader } = await import(chrome.runtime.getURL('editor-ui.js'));
   let review = null, fallback = null, armed = null, dismissed = null, pausedUntil = 0;
   let config = {}, field = null, timer, scheduled = null, port = null, target = null, actionType = '', suggestion = '', composing = false;
+  let inlinePreview = null;
   const host = document.createElement('stilura-assistant');
   host.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;';
   const shadow = host.attachShadow({ mode: 'open' });
@@ -17,24 +19,34 @@
     button:hover{background:#e1ead9}button:focus-visible,input:focus-visible{outline:2px solid #376bcc;outline-offset:2px}
     button:disabled{opacity:.55;cursor:wait}.primary{background:#294c36;color:#fff}.primary:hover{background:#365f44}
     input{font:inherit;min-width:160px;width:100%;border:1px solid #bac5b4;border-radius:6px;padding:7px;background:white;color:#253026;margin:6px 0;}
-    .body{width:320px;max-width:calc(100vw - 34px)}.preview{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;margin:6px 0;padding:8px;background:#f0f3ec;border-radius:6px;}
-    .variant{display:block;text-align:left;width:100%;white-space:pre-wrap;margin:5px 0}
+    .body{width:320px;max-width:calc(100vw - 34px)}
+    .inline{position:fixed;pointer-events:none;overflow:hidden;isolation:isolate;}
+    .inline-text{position:relative;min-height:100%;}
+    .preview{background:rgba(86,139,218,.14);border-radius:2px;box-decoration-break:clone;-webkit-box-decoration-break:clone;}
+    .inline[data-phase="command"] .preview:empty{display:inline-block;min-width:1ch;}
+    .preview::after{content:'';border-left:1.5px solid currentColor;}
+    .inline[data-phase="streaming"] .preview{opacity:.55;background:none;}
+    .inline[data-waiting="true"] .preview::after{display:none;}
     .status{font-size:12px;max-width:320px;white-space:pre-wrap;overflow-wrap:anywhere;padding:4px 5px;color:#4a6045}
     .ghost{position:fixed;pointer-events:none;color:#64735e;white-space:pre-wrap;overflow-wrap:break-word;overflow:hidden;}
     .sr{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%)}
-  `;
+    .panel.is-request{padding:0;border:0;background:transparent;box-shadow:none;max-height:none;overflow:visible;}
+  ` + EDITOR_UI_CSS;
   const panel = document.createElement('section'); panel.className = 'panel'; panel.hidden = true; panel.setAttribute('aria-label', 'Stilura writing assistant');
   const ghost = document.createElement('div'); ghost.className = 'ghost'; ghost.hidden = true; ghost.setAttribute('aria-hidden', 'true');
+  const inline = document.createElement('div'); inline.className = 'inline'; inline.hidden = true; inline.setAttribute('aria-hidden', 'true');
   const live = document.createElement('div'); live.className = 'sr'; live.setAttribute('role', 'status');
-  shadow.append(style, panel, ghost, live);
+  shadow.append(style, panel, ghost, inline, live);
   document.documentElement.append(host);
 
   async function refresh() {
     try { config = (await chrome.runtime.sendMessage({ type: 'settings' })).data ?? {}; }
     catch { config = {}; }
     if (!config.enabled || !config.connected) cancel();
+    else if (field) { toolbar(); scheduleSuggestion(); }
   }
   chrome.runtime.onMessage.addListener(message => { if (message.type === 'settings-changed') { cancel(); void refresh(); } });
+  field = editable(document.activeElement);
   void refresh();
 
   function editable(node) {
@@ -114,6 +126,7 @@
     clearTimeout(timer); timer = null; scheduled = null;
     const previous = port; port = null; previous?.disconnect(); target = null; actionType = ''; suggestion = ''; review = null; fallback = null; armed = null;
     panel.hidden = true; ghost.hidden = true; ghost.replaceChildren();
+    inlinePreview = null; inline.hidden = true; inline.replaceChildren();
   }
   function button(label, action, primary = false) {
     const el = document.createElement('button'); el.type = 'button'; el.textContent = label;
@@ -127,7 +140,6 @@
       const caret = range.getBoundingClientRect();
       return caret.height ? caret : box;
     }
-    // shortcut: native controls use an anchored preview; true inline replacement needs an editor-specific adapter.
     const mirror = document.createElement('div'), css = getComputedStyle(el);
     for (const property of ['font', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'textAlign', 'direction', 'tabSize', 'padding', 'border', 'boxSizing', 'overflowWrap']) mirror.style[property] = css[property];
     Object.assign(mirror.style, { position: 'fixed', visibility: 'hidden', left: box.left - el.scrollLeft + 'px', top: box.top - el.scrollTop + 'px', width: el.offsetWidth + 'px', whiteSpace: el instanceof HTMLInputElement ? 'pre' : 'pre-wrap' });
@@ -139,21 +151,22 @@
   function position() {
     if (!field?.isConnected) return cancel();
     const box = field.getBoundingClientRect();
-    if (box.bottom < 0 || box.top > innerHeight || box.right < 0 || box.left > innerWidth) { panel.hidden = true; ghost.hidden = true; return; }
+    if (box.bottom < 0 || box.top > innerHeight || box.right < 0 || box.left > innerWidth) { panel.hidden = true; ghost.hidden = true; inline.hidden = true; return; }
     const saved = target || slash(snapshot()) || snapshot();
     const anchor = saved ? caretBox(saved) : box;
     const width = panel.offsetWidth || 320, height = panel.offsetHeight || 42;
     panel.style.left = Math.max(8, Math.min(anchor.left, innerWidth - width - 8)) + 'px';
     panel.style.top = Math.max(8, anchor.bottom + height + 8 <= innerHeight ? anchor.bottom + 5 : anchor.top - height - 5) + 'px';
     if (suggestion && target) drawGhost(target, suggestion);
+    if (inlinePreview) drawInline();
   }
   function frame(message = '') {
+    panel.classList.remove('is-request');
     panel.replaceChildren(); panel.hidden = false;
     const row = document.createElement('div'); row.className = 'row';
     const brand = document.createElement('span'); brand.className = 'brand'; brand.textContent = 'Stilura';
     row.append(brand); panel.append(row);
     if (message) { const status = document.createElement('div'); status.className = 'status'; status.textContent = message; panel.append(status); announce(message); }
-    row.append(button('Close', () => { const el = field; cancel(); el?.focus({ preventScroll: true }); }));
     position(); return row;
   }
   function error(message) { frame(message); position(); }
@@ -167,6 +180,7 @@
   }
   function toolbar() {
     if (!config.enabled || !config.connected || composing || port || target) return;
+    inlinePreview = null; inline.hidden = true;
     const saved = snapshot();
     if (!saved || (dismissed?.el === saved.el && dismissed.document === saved.document && dismissed.from === saved.from && dismissed.to === saved.to)) return;
     const command = slash(saved);
@@ -174,10 +188,10 @@
       const row = frame(); row.prepend(button('Rewrite', () => rewrite(saved), true));
     } else if (command) {
       const active = armed?.el === saved.el && armed.from === command.from;
-      const row = frame(active ? 'Enter to generate · Escape to dismiss' : '⌘/Ctrl + Enter to generate');
-      const generateButton = button('Generate', () => generate(command), true); generateButton.disabled = !command.instruction;
-      row.prepend(generateButton);
-    } else panel.hidden = true;
+      panel.hidden = true;
+      inlinePreview = { saved: command, text: command.text.slice(1), phase: 'command' };
+      announce(active ? 'Enter to generate. Escape dismisses.' : 'Command. Control or Command + Enter generates.');
+    } else { panel.hidden = true; inlinePreview = null; inline.hidden = true; }
     position();
   }
 
@@ -212,8 +226,8 @@
   function run(action, saved, body, receive, previous = null) {
     cancel(); target = saved; actionType = action; fallback = previous;
     if (action !== 'suggest') {
-      frame('Writing… Escape cancels.');
-      if (previous) previewText(previous.variants[previous.index]);
+      previewText('');
+      announce('Writing. Escape cancels.');
     }
     const failed = message => {
       const kept = fallback; cancel();
@@ -236,21 +250,63 @@
     connection.postMessage({ action, body: { document: saved.document, ...body } });
   }
   function previewText(text) {
-    let preview = panel.querySelector('.preview');
-    if (!preview) { preview = document.createElement('div'); preview.className = 'preview body'; panel.append(preview); }
-    preview.textContent = text; position();
+    panel.hidden = true;
+    inlinePreview = { saved: target, text, phase: review ? 'review' : 'streaming', scrollTop: inlinePreview?.scrollTop };
+    position();
+  }
+  function drawInline() {
+    const { saved, text, phase } = inlinePreview;
+    if (!unchanged(saved)) return cancel();
+    const el = saved.el, box = el.getBoundingClientRect(), css = getComputedStyle(el);
+    let background = css.backgroundColor;
+    for (let parent = el.parentElement; /^(transparent|rgba\(.*?, 0\))$/.test(background) && parent; parent = parent.parentElement) background = getComputedStyle(parent).backgroundColor;
+    inline.hidden = false; inline.dataset.phase = phase;
+    inline.dataset.waiting = String(phase === 'streaming' && !text);
+    inline.setAttribute('aria-busy', String(phase === 'streaming'));
+    Object.assign(inline.style, { left: box.left + el.clientLeft + 'px', top: box.top + el.clientTop + 'px',
+      width: el.clientWidth + 'px', height: el.clientHeight + 'px', background: /^(transparent|rgba\(.*?, 0\))$/.test(background) ? 'Canvas' : background,
+      borderRadius: css.borderRadius, color: css.color });
+    const mirror = document.createElement('div'); mirror.className = 'inline-text';
+    const properties = ['font', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'textAlign', 'textTransform', 'direction', 'tabSize', 'padding', 'whiteSpace', 'overflowWrap', 'wordBreak'];
+    for (const property of properties) mirror.style[property] = css[property];
+    mirror.style.width = el.clientWidth + 'px';
+    const preview = document.createElement('span'); preview.className = 'preview';
+    if (phase === 'streaming') {
+      preview.append(createGenerationLoader());
+    }
+    if (phase === 'streaming' && !text) {
+      const skeleton = document.createElement('span'); skeleton.className = 'generation-skeleton';
+      skeleton.textContent = fallback?.variants[fallback.index] || saved.document.slice(saved.from, saved.to).replace(/^\//, '') || 'Writing a new passage…';
+      preview.append(skeleton);
+    } else preview.append(document.createTextNode(text));
+    if ('value' in el) {
+      mirror.style.whiteSpace = el instanceof HTMLInputElement || el.wrap === 'off' ? 'pre' : 'pre-wrap';
+      mirror.append(document.createTextNode(saved.document.slice(0, saved.from)), preview, document.createTextNode(saved.document.slice(saved.to)));
+    } else {
+      // Copy text and computed formatting only; never duplicate page scripts or attributes.
+      const copy = node => {
+        if (node.nodeType === 3) return document.createTextNode(node.data);
+        if (node.nodeType !== 1) return document.createTextNode('');
+        const child = document.createElement(node.tagName === 'BR' ? 'br' : /^(DIV|P|LI|UL|OL|BLOCKQUOTE|H[1-6]|PRE)$/.test(node.tagName) ? 'div' : 'span');
+        const computed = getComputedStyle(node);
+        for (const property of [...properties, 'display', 'margin', 'color', 'fontWeight', 'fontStyle', 'textDecoration']) child.style[property] = computed[property];
+        child.append(...[...node.childNodes].map(copy)); return child;
+      };
+      mirror.append(...[...el.childNodes].map(copy));
+      const doc = model(mirror), range = document.createRange();
+      range.setStart(...doc.point(saved.from)); range.setEnd(...doc.point(saved.to));
+      range.deleteContents(); range.insertNode(preview);
+    }
+    inline.replaceChildren(mirror);
+    const top = Math.max(0, Math.min(inlinePreview.scrollTop ?? el.scrollTop, mirror.scrollHeight - el.clientHeight));
+    const left = Math.max(0, Math.min(el.scrollLeft, mirror.scrollWidth - el.clientWidth));
+    mirror.style.transform = `translate(${-left}px, ${-top}px)`;
   }
   function present(candidate, message = '') {
     review = candidate; target = candidate.saved; actionType = candidate.action;
-    const row = frame(message || 'Tab accepts · R regenerates · Esc dismisses');
-    row.prepend(button('Accept', () => apply(candidate.saved, candidate.variants[candidate.index]), true), button('Regenerate', regenerate));
     previewText(candidate.variants[candidate.index]);
-    if (candidate.variants.length > 1) {
-      const controls = document.createElement('div'); controls.className = 'row';
-      const count = document.createElement('span'); count.textContent = `${candidate.index + 1} / ${candidate.variants.length}`; count.className = 'status';
-      controls.append(button('Previous variant', () => cycle(-1)), count, button('Next variant', () => cycle(1))); panel.append(controls);
-    }
-    if (candidate.answer) { const answer = document.createElement('div'); answer.className = 'status'; answer.textContent = candidate.answer; panel.append(answer); }
+    if (message || candidate.answer) frame(message || candidate.answer);
+    announce(`${message || candidate.answer || ''} ${candidate.variants[candidate.index]}. Click or type to edit. Tab accepts. R regenerates. Arrow keys switch variants. Escape dismisses.`);
     position(); focusEnd(candidate.saved);
   }
   function cycle(step) {
@@ -265,8 +321,7 @@
   }
   function ask(saved, instruction, previous = null) {
     const previousText = previous?.variants[previous.index];
-    let request = instruction;
-    if (previousText) request += `\nReplace the previous candidate with different wording, preserving the request and facts. Previous candidate:\n${previousText}`;
+    const request = rewriteInstruction(instruction, previousText);
     focusEnd(saved);
     run('ask', saved, { selected: saved.document.slice(saved.from, saved.to), from: saved.from, instruction: request }, message => {
       if (!message.done) return;
@@ -274,22 +329,23 @@
       if (!data.variants?.length) {
         if (!data.answer?.trim()) throw Error('The model returned no answer.');
         if (previous) { present(previous, data.answer); return; }
-        frame(data.answer); focusEnd(saved); return;
+        rewrite(saved, data.answer); focusEnd(saved); return;
       }
       const variants = distinctVariants(data.variants, saved.document.slice(saved.from, saved.to), previousText);
       present({ saved, action: 'ask', instruction, variants, index: 0, answer: data.answer });
     }, previous);
   }
-  function rewrite(saved) {
-    cancel(); target = saved; frame();
-    const body = document.createElement('form'); body.className = 'body';
-    const label = document.createElement('label'); label.textContent = 'How should it change?';
-    const input = document.createElement('input'); input.placeholder = 'Rewrite, shorten, explain, give synonyms…'; input.maxLength = 4000; input.required = true; label.append(input);
-    const submit = button('Send request', () => {}, true); submit.type = 'submit';
-    body.append(label, submit); panel.append(body); position(); input.focus();
-    body.addEventListener('submit', event => {
-      event.preventDefault(); if (input.value.trim()) ask(saved, input.value.trim());
+  function rewrite(saved, answer = '') {
+    cancel(); target = saved; actionType = 'ask';
+    const { dom, input, fit } = createPassageInput({
+      onSubmit: instruction => ask(saved, instruction),
+      onChange: () => position(),
+      onClose: () => { dismissed = snapshot(saved.el); cancel(); saved.el.focus({ preventScroll: true }); },
     });
+    panel.replaceChildren(dom); panel.classList.add('is-request'); panel.hidden = false;
+    input.value = answer;
+    if (!answer) input.focus();
+    fit(); position();
   }
   function generate(saved, previous = null) {
     if (!saved.instruction) return;
@@ -364,26 +420,32 @@
   document.addEventListener('selectionchange', () => {
     if (shadow.activeElement) return;
     const saved = snapshot();
-    if (target && (!saved || saved.el !== target.el || saved.document !== target.document || saved.from !== (['write', 'ask'].includes(actionType) ? target.to : target.from) || saved.to !== target.to)) cancel();
+    const caretMoved = target && actionType !== 'ask' && (saved?.from !== (actionType === 'write' ? target.to : target.from) || saved?.to !== target.to);
+    if (target && (!saved || saved.el !== target.el || saved.document !== target.document || caretMoved)) cancel();
     if (scheduled && (!saved || saved.el !== scheduled.el || saved.from !== scheduled.from || saved.to !== scheduled.to)) { clearTimeout(timer); scheduled = null; }
     toolbar();
   });
+  document.addEventListener('beforeinput', event => {
+    if (!event.isTrusted || !review || port || !event.composedPath().includes(review.saved.el)) return;
+    apply(review.saved, review.variants[review.index]);
+  }, true);
   document.addEventListener('keydown', event => {
     if (!event.isTrusted || !config.enabled || event.isComposing || composing) return;
     const consume = () => { event.preventDefault(); event.stopImmediatePropagation(); };
-    if (event.key === 'Escape' && (!panel.hidden || port || suggestion)) {
+    if (event.composedPath().includes(host)) return;
+    const action = review ? reviewAction(event, review.variants.length) : null;
+    if ((review ? action === 'Reject' : event.key === 'Escape') && (!panel.hidden || !inline.hidden || port || suggestion)) {
       consume(); const el = field, kept = fallback; dismissed = snapshot(); cancel();
       if (kept && unchanged(kept.saved)) present(kept); else el?.focus({ preventScroll: true });
       return;
     }
-    if (event.composedPath().includes(host)) return;
     field = editable(event.composedPath()[0]); if (!field) return;
-    if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
-      if (event.key === 'Tab' && !event.altKey && target && (suggestion || review)) { consume(); apply(target, suggestion || review.variants[review.index]); return; }
-      if (review && !port) {
-        if ((event.key.toLowerCase() === 'r' && !event.altKey) || (event.key === 'Enter' && event.altKey)) { consume(); regenerate(); return; }
-        if (['ArrowUp', 'ArrowDown'].includes(event.key) && !event.altKey && review.variants.length > 1) { consume(); cycle(event.key === 'ArrowUp' ? -1 : 1); return; }
-      }
+    if (suggestion && target && reviewAction(event) === 'Accept') { consume(); apply(target, suggestion); return; }
+    if (review && !port) {
+      if (action === 'Accept') { consume(); apply(target, review.variants[review.index]); return; }
+      if (action === 'Regenerate') { consume(); regenerate(); return; }
+      if (action === 'Next' || action === 'Previous') { consume(); cycle(action === 'Next' ? 1 : -1); return; }
+      if (action === 'Edit') { apply(review.saved, review.variants[review.index]); return; }
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.altKey) {
       const saved = snapshot(), command = slash(saved);
@@ -401,10 +463,20 @@
   document.addEventListener('compositionend', event => { composing = false; if (event.isTrusted) scheduleSuggestion(); });
   document.addEventListener('pointerdown', event => {
     if (event.composedPath().includes(host)) return;
+    if (review && !port && event.composedPath().includes(review.saved.el)) apply(review.saved, review.variants[review.index]);
     if (!editable(event.composedPath()[0])) { cancel(); field = null; }
   }, true);
   window.addEventListener('blur', cancel);
   document.addEventListener('visibilitychange', () => { if (document.hidden) cancel(); });
-  document.addEventListener('scroll', () => { if (!panel.hidden || suggestion) position(); }, true);
+  document.addEventListener('scroll', () => { if (!panel.hidden || inlinePreview || suggestion) position(); }, true);
+  document.addEventListener('wheel', event => {
+    if (event.ctrlKey || !inlinePreview || inlinePreview.phase === 'command' || !event.composedPath().includes(inlinePreview.saved.el)) return;
+    const el = inlinePreview.saved.el, mirror = inline.firstChild;
+    const before = inlinePreview.scrollTop ?? el.scrollTop;
+    const distance = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? el.clientHeight : 1);
+    const next = Math.max(0, Math.min(before + distance, mirror.scrollHeight - el.clientHeight));
+    if (next === before) return;
+    event.preventDefault(); inlinePreview.scrollTop = next; drawInline();
+  }, { capture: true, passive: false });
   window.addEventListener('resize', position);
 })().catch(error => console.warn('Stilura could not initialize:', error.message));

@@ -44,10 +44,13 @@ export async function streamText({systemPrompt, messages, onText, signal}) {
     onText('Fixture brief update.<stilura-edits>' + JSON.stringify({ edits: [], brief: { source: messages.at(-1).content, changes: { reader: 'beginners' } } }) + '</stilura-edits>');
     return;
   }
+  await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,300);signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(signal.reason)}, {once:true})});
+  if (systemPrompt.includes('<stilura-text>')) onText('Вот другой вариант интро:\\n\\n<stilura-text>');
   onText('Partial fixture answer');
   await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,300);signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(signal.reason)}, {once:true})});
   if (systemPrompt.includes('expand the following idea')) throw Error('Simulated stream failure');
   onText(' — completed discussion.');
+  if (systemPrompt.includes('<stilura-text>')) onText('</stilura-text>\\nHope this helps.');
 }
 `;
 const result = await build({

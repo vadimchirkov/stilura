@@ -46,6 +46,7 @@ const modelServer = createServer(async (req, res) => {
     ? { content: 'Checking notes.<stilura-edits>unverified', tool_calls: [{ index: 0, id: 'call-search', type: 'function',
         function: { name: mode === 'unknown' ? 'mcp_notes_get' : 'mcp_notes_search', arguments: '{"query":"writing preferences"}' } }] }
     : { content: hasResult ? 'Use short sentences.' : 'Plain answer.' };
+  if (!wantsTool && body.messages.some(message => message.role === 'system' && message.content.includes('<stilura-text>'))) delta.content = '<stilura-text>' + delta.content + '</stilura-text>';
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const chunk = choices => ({ id: 'test', object: 'chat.completion.chunk', created: 0, model: 'model', choices });
   res.write(`data: ${JSON.stringify(chunk([{ index: 0, delta, finish_reason: null }]))}\n\n`);

@@ -2,6 +2,15 @@
 
 Stilura (renamed from Litura) follows [semantic versioning](https://semver.org). Until 1.0 the minor number carries breaking changes.
 
+## 0.7.1 — 2026-10-20
+
+- Generation and replacement previews now cover the original range inside the field in the browser extension instead of a popover beside the cursor: the preview follows field typography, wrapping and scrolling, and a long result can be scrolled before Tab accepts it. Command mode has no toolbar any more, and the slash hides visually as the request is highlighted.
+- A completed suggestion is accepted by clicking it or typing into it, in both the app and the extension, and normal editing continues at the caret.
+- The model now returns prose inside `<stilura-text>`, and the server streams only that envelope. Preambles like "Вот другой вариант", quotes and fences around the passage no longer reach the draft; an invalid format is retried once and then reported instead of being written.
+- The rewrite request in the extension is one growing input shared with the app. Enter sends, Shift+Enter adds a line, Escape closes.
+- Both frontends share `extension/editor-ui.js` — the rewrite input, the pixel loader and their CSS — and `reviewAction` / `rewriteInstruction` in `extension/writing-rules.js`, so review keys, IME handling and regeneration prompts can no longer drift apart. The elapsed clock and the labeled loader are gone.
+- Added `tests/editor-rules.mjs` to `npm run check`.
+
 ## 0.7.0 — 2026-10-15
 
 - Added inline generation with `/`, passage questions and replacements with `Change` / Cmd/Ctrl+K, and previews accepted with Tab, dismissed with Escape or regenerated with R.

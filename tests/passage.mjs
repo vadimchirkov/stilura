@@ -1,3 +1,4 @@
+import { createGenerationLoader, createPassageInput } from '../extension/editor-ui.js';
 import * as writingRules from '../extension/writing-rules.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ function setup({ beforeReply = () => {}, result } = {}) {
   const jobs = new Set(), requests = [], notices = [], snapshots = [];
   const view = { composing: false, focus() {} };
   const context = vm.createContext({
-    ...writingRules,
+    ...writingRules, createGenerationLoader, createPassageInput,
     EditorState, StateField, StateEffect, EditorView, Decoration, WidgetType, showTooltip, isolateHistory,
     mapChatEdit, AbortController, documentKey: 'draft', document: { activeElement: null },
     loadingDocument: false, savePaused: false, jobs, clearGhostFx: StateEffect.define(), cancelSuggestion() {}, ghostClear() {},

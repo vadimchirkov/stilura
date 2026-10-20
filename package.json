@@ -1,6 +1,6 @@
 {
   "name": "stilura",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "A local AI-assisted editor for sharper, more human writing",
   "keywords": [
     "writing",
@@ -62,7 +62,7 @@
     "desktop:build": "tauri build",
     "tauri": "tauri",
     "smoke:desktop": "node scripts/smoke-desktop.mjs",
-    "check": "node --check index.js && node --check pi.js && node --check tasks.js && node --check extension/background.js && node --check extension/content.js && node --check extension/popup.js && npm run build && node selfcheck.js && node tests/suggestions.mjs && node tests/generation.mjs && node tests/passage.mjs && node tests/generation-http.mjs && node tests/tasks-http.mjs && node tests/live.mjs && node tests/work.mjs && node tests/live-http.mjs && node tests/oauth.mjs && node tests/mcp.mjs && node safetycheck.js && node tests/storage-migration.mjs && node tests/persistence.mjs && node tests/ui.mjs",
+    "check": "node --check index.js && node --check pi.js && node --check tasks.js && node --check extension/background.js && node --check extension/content.js && node --check extension/popup.js && npm run build && node selfcheck.js && node tests/editor-rules.mjs && node tests/suggestions.mjs && node tests/generation.mjs && node tests/passage.mjs && node tests/generation-http.mjs && node tests/tasks-http.mjs && node tests/live.mjs && node tests/work.mjs && node tests/live-http.mjs && node tests/oauth.mjs && node tests/mcp.mjs && node safetycheck.js && node tests/storage-migration.mjs && node tests/persistence.mjs && node tests/ui.mjs",
     "test:browser": "node tests/browser-fixture.mjs",
     "test:extension": "node tests/extension-browser.mjs",
     "check:suggestions": "node tests/suggestions.mjs",

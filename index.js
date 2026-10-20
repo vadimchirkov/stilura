@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { cancelOAuth, completeText, getAgentStatus, getOAuthStatus, removeProviderApiKey, saveProviderApiKey, startOAuth, streamText, submitOAuthCode } from './pi.js';
 import { buildSystemPrompt, requestRewrite, readStyle, NO_SLOP, STYLE_FILE } from './tasks.js';
-import { insertionText, markSelection } from './review.js';
+import { generationText, insertionText, markSelection } from './review.js';
 import { documentStore, MAX_DOCUMENT_BYTES } from './document-store.js';
 import { documentSessions } from './live-session.js';
 import { requestSuggestion } from './suggestions.js';
@@ -618,13 +618,16 @@ async function handleRequest(req, res) {
       }
       const system = buildSystemPrompt(
         (writing
-          ? 'Write the text requested by the author at the insertion point. Follow the request, its language, format and length. ' +
+          ? 'Complete the author\'s document at the insertion point. Produce the requested passage as document content. Follow the request, its language, format and length. ' +
             'Read the surrounding draft for context and continuity. Return only the new text that replaces the request, never repeat or rewrite the surrounding draft. ' +
             'Text before and after the insertion is already written; do not retell it. When a previous suggestion is supplied, replace it with a materially different version of the same request. Change wording or structure while preserving facts; do not append to the old version or repeat it. '
           : 'You are a writing assistant. Given the context material and the current working document, ' +
             'expand the following idea into a well-written passage that fits the tone and topic. ') +
         NO_SLOP +
-        'Return only the passage, no commentary, no preamble.'
+        'Return only the passage, no commentary, no preamble.' +
+        (writing ? ' Output the finished passage inside <stilura-text> and </stilura-text>. ' +
+          'Begin with the actual prose, never an acknowledgement, an introduction such as "Here is another version" or "Вот другой вариант", or a description of your edits. ' +
+          'Do not wrap the passage in quotation marks or Markdown fences unless they belong to the requested text.' : '')
       );
       const user = [
         body.context  ? `CONTEXT:\n${body.context}`           : '',
@@ -646,24 +649,33 @@ async function handleRequest(req, res) {
         const fingerprint = text => (text.match(/[\p{L}\p{N}\p{M}_]+/gu) ?? [text.trim()]).join(' ').toLowerCase();
         for (let attempt = 0; attempt < (writing ? 2 : 1); attempt++) {
           signal.throwIfAborted();
-          let answer = '', usedTools = false;
+          let answer = '', shown = '', usedTools = false;
           await streamText({
             systemPrompt: system, userPrompt: prompt, selection: body.agent, signal,
             mcp: writing,
             onReset: () => {
               usedTools = true;
-              answer = '';
+              answer = ''; shown = '';
               res.write(`data: ${JSON.stringify({ replace: '' })}\n\n`);
             },
-            onText: text => { answer += text; res.write(`data: ${JSON.stringify({ text })}\n\n`); },
+            onText: text => {
+              answer += text;
+              const preview = writing ? generationText(answer) : answer;
+              if (preview === shown) return;
+              const chunk = preview.startsWith(shown) ? { text: preview.slice(shown.length) } : { replace: preview };
+              res.write(`data: ${JSON.stringify(chunk)}\n\n`); shown = preview;
+            },
           });
           signal.throwIfAborted();
           if (!writing) break;
-          const text = insertionText((body.document ?? '').slice(0, body.from), answer, (body.document ?? '').slice(body.cursor));
-          const problem = !text ? 'The model repeated text already in the draft or returned no new text.'
-            : body.previous && fingerprint(text) === fingerprint(body.previous) ? 'The model repeated the previous suggestion.' : '';
+          let text = '', problem = '';
+          try {
+            text = insertionText((body.document ?? '').slice(0, body.from), generationText(answer, true), (body.document ?? '').slice(body.cursor));
+            problem = !text ? 'The model repeated text already in the draft or returned no new text.'
+              : body.previous && fingerprint(text) === fingerprint(body.previous) ? 'The model repeated the previous suggestion.' : '';
+          } catch (error) { problem = error.message; }
           if (!problem) {
-            if (text !== answer) res.write(`data: ${JSON.stringify({ replace: text })}\n\n`);
+            if (text !== shown) res.write(`data: ${JSON.stringify({ replace: text })}\n\n`);
             break;
           }
           if (attempt === 1 || usedTools) throw new Error(problem);

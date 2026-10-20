@@ -18,13 +18,21 @@ export async function completeText({ systemPrompt, userPrompt }) {
   return Buffer.from(JSON.stringify({ systemPrompt, userPrompt })).toString('base64');
 }
 export async function streamText({ systemPrompt, userPrompt, onText }) {
+  const emit = onText;
+  onText = text => emit('<stilura-text>' + text + '</stilura-text>');
   const corrected = userPrompt.includes('\n\nCORRECTION:');
+  if (userPrompt.includes('PREAMBLE_STREAM')) {
+    for (const part of ['Вот другой вариант интро:\n\n<sti', 'lura-text>Настоящий ', 'текст.<', '/stilura-te', 'xt>\nHope this helps.']) emit(part);
+    return;
+  }
+  if (userPrompt.includes('FORMAT_RECOVERS') && !corrected) { emit('Here is your answer.'); return; }
+  if (userPrompt.includes('INVALID_FORMAT')) { emit('Here is your answer.'); return; }
   if (userPrompt.includes('ECHO_WITH_NEW')) { onText('Opening context.\n\nA new passage.\n\nEnding context.'); return; }
   if (userPrompt.includes('ECHO_THEN_NEW')) { onText(corrected ? 'A fresh garden passage.' : 'Opening context.'); return; }
   if (userPrompt.includes('ALWAYS_ECHO')) { onText('Opening context.'); return; }
   if (userPrompt.includes('REGENERATE_NEW')) { onText(corrected ? 'A different garden grows.' : 'The old garden stays quiet.'); return; }
   if (userPrompt.includes('ALWAYS_PREVIOUS')) { onText('THE OLD GARDEN STAYS QUIET!'); return; }
-  onText(JSON.stringify({ systemPrompt, userPrompt }));
+  onText(JSON.stringify({ systemPrompt, userPrompt }).replaceAll('<', '\\u003c'));
   if (userPrompt.includes('TEST_FAILURE')) throw new Error('Simulated stream failure');
 }`;
 const bundle = path.join(directory, 'server.mjs');
@@ -74,6 +82,18 @@ try {
   const echoed = await stream({ ...input, instruction: 'ECHO_WITH_NEW' });
   assert.deepEqual(echoed.at(-2), { replace: 'A new passage.' });
   assert.equal(echoed.at(-1), 'DONE');
+  const clean = await stream({ ...input, instruction: 'PREAMBLE_STREAM' });
+  assert.equal(clean.filter(event => event.text).map(event => event.text).join(''), 'Настоящий текст.');
+  assert(!JSON.stringify(clean).includes('Вот другой вариант'));
+  assert(!JSON.stringify(clean).includes('Hope this helps'));
+  assert(!JSON.stringify(clean).includes('stilura-text'));
+  assert.equal(clean.at(-1), 'DONE');
+  const fixedFormat = await stream({ ...input, instruction: 'FORMAT_RECOVERS' });
+  assert.equal(fixedFormat.filter(event => event.replace === '').length, 1);
+  assert.equal(fixedFormat.at(-1), 'DONE');
+  const invalidFormat = await stream({ ...input, instruction: 'INVALID_FORMAT' });
+  assert.match(invalidFormat.at(-1).error, /invalid passage format/);
+  assert.equal(invalidFormat.filter(event => event.text).length, 0, 'Invalid chat output must never reach a draft preview');
   const recovered = await stream({ ...input, instruction: 'ECHO_THEN_NEW' });
   assert.equal(recovered.filter(event => event.replace === '').length, 1);
   assert.equal(recovered.at(-2).text, 'A fresh garden passage.');
