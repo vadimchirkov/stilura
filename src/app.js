@@ -3741,7 +3741,7 @@ const editorTheme = EditorView.theme({
   // Slightly dim the content while the document is loading.
   '&.streaming .cm-content': { opacity: '0.8' },
 
-  '.cm-generation': { whiteSpace: 'pre-wrap' },
+  '.cm-generation': { whiteSpace: 'break-spaces' },
 
   '.cm-generation-request': { background: 'var(--attached-tint)', borderRadius: '2px' },
 
