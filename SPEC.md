@@ -237,7 +237,7 @@ All bodies and non-streaming responses are JSON unless noted.
 | `POST` | `/suggest` | Return a short continuation |
 | `POST` | `/write` | Stream text to replace an editor request over SSE |
 | `POST` | `/idea` | Stream an idea expansion over SSE |
-| `POST` | `/chat` | Stream a draft conversation over SSE |
+| `POST` | `/chat` | Stream a draft conversation over SSE (paused — answers `410` while the composer is hidden) |
 
 ### Agent selection
 

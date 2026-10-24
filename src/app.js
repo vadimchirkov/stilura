@@ -1101,15 +1101,43 @@ const refreshSpellFx = StateEffect.define();
 function visibleSpellMarkers(text) {
   return spellingMarkers(text, spellChecker);
 }
+// Marks are plain ranges drawn by a view plugin, not a DecorationSet. Mapping
+// keeps an underline on the word it belongs to while typing, and re-reading
+// the quote keeps a click on it offering suggestions for the text that is
+// actually underlined now.
+function mapSpellMarkers(markers, tr) {
+  const out = [];
+  for (const marker of markers) {
+    const from = tr.changes.mapPos(marker.from, 1), to = tr.changes.mapPos(marker.to, -1);
+    if (to > from) out.push({ ...marker, from, to, quote: tr.newDoc.sliceString(from, to) });
+  }
+  return out;
+}
 const spellMarkerField = StateField.define({
   create: state => visibleSpellMarkers(state.doc.toString()),
   update: (markers, tr) => {
     for (const effect of tr.effects) {
       if (effect.is(refreshSpellFx)) return visibleSpellMarkers(tr.newDoc.toString());
     }
-    return tr.docChanged ? visibleSpellMarkers(tr.newDoc.toString()) : markers;
+    // A keystroke moves the existing marks along with the text and leaves the
+    // dictionary alone; the full pass runs once typing pauses
+    // (scheduleSpellCheck). Checking every word in the draft on every key was
+    // the largest single cost of typing a long document.
+    return tr.docChanged ? mapSpellMarkers(markers, tr) : markers;
   },
 });
+
+// Long enough to skip the middle of a word, short enough that the underline
+// is there by the time the writer reads the sentence back.
+const SPELL_RECHECK_MS = 250;
+let spellRecheck = 0;
+function scheduleSpellCheck() {
+  clearTimeout(spellRecheck);
+  spellRecheck = setTimeout(() => {
+    spellRecheck = 0;
+    if (spellChecker) workView.dispatch({ effects: refreshSpellFx.of(null) });
+  }, SPELL_RECHECK_MS);
+}
 
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !markBubble.hidden) { hideMarkBubble(); workView.focus(); return; }
@@ -3886,6 +3914,7 @@ const workView = new EditorView({
             queueMicrotask(() => { if (!loadingDocument && marginNotes.length) { syncNoteMarks(); saveNotes(); } });
           }
           if (!loadingDocument) save();
+          scheduleSpellCheck();
 
         }
       }),

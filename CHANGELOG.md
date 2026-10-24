@@ -2,6 +2,14 @@
 
 Stilura (renamed from Litura) follows [semantic versioning](https://semver.org). Until 1.0 the minor number carries breaking changes.
 
+## Unreleased
+
+- A crash no longer keeps the writer out of their own draft. An unreadable notes file is kept aside and the margin starts empty instead of stopping the server; a session file left by a dead or crashed process is verified against the server it advertises before it is trusted, so a reused process number cannot keep the draft locked; a stale save lock is recognized and released; and one unreadable desktop state entry no longer hides every setting and the open draft. Ctrl-C and a closing window now remove the session claim on the way out.
+- Typing stays responsive in long drafts. Spelling is checked when typing pauses instead of on every keystroke (the marks already on screen follow the edit), and the Latin-script test that guards the English dictionary runs in one scan. Typing 63 characters at 300k characters went from ~0.8 s to ~0.25 s.
+- Static files are compressed and revalidated: the app bundle serves at roughly a third of its size, and a reload answers `304` instead of resending it. Release builds are minified; the development build stays readable.
+- The draft pane is a `<main>` with a heading, so the editor is no longer outside every landmark and the page has a level-one heading for screen readers.
+- `SPEC.md` and the agent skill no longer advertise `POST /chat`, which answers `410`.
+
 ## 0.7.1 — 2026-10-20
 
 - Generation and replacement previews now cover the original range inside the field in the browser extension instead of a popover beside the cursor: the preview follows field typography, wrapping and scrolling, and a long result can be scrolled before Tab accepts it. Command mode has no toolbar any more, and the slash hides visually as the request is highlighted.

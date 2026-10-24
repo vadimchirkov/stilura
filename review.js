@@ -1,8 +1,16 @@
 export const WORD_RE = /\p{L}[\p{L}\p{N}'’-]*/gu;
 
 export function isLatinScript(text) {
-  const letters = text.match(/\p{L}/gu) ?? [];
-  if (!letters.length) return true;
+  const letters = text.match(/\p{L}/gu);
+  if (!letters?.length) return true;
+  // One native scan covers the common case: a draft written in Latin script
+  // has exactly as many Latin-script matches as letters, so no per-letter
+  // test is needed. `\p{Script=Latin}` also matches numeral signs (Ⅻ, ↈ),
+  // which `\p{L}` does not count — when the counts differ, fall back to the
+  // exact count below.
+  const latin = text.match(/\p{Script=Latin}/gu)?.length ?? 0;
+  if (latin === letters.length) return true;
+  if (latin === 0) return false;
   return letters.filter(ch => /[\p{Script=Latin}]/u.test(ch)).length / letters.length > 0.5;
 }
 

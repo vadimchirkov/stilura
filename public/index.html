@@ -67,7 +67,11 @@
       Continuations appear in a non-editable panel below the current line.
       Tab accepts, Escape cancels, Cmd/Ctrl+Enter requests one explicitly.
     -->
-    <div class="pane" id="pane-work">
+    <main class="pane" id="pane-work">
+      <!-- The page has one heading, for people who navigate by headings. The
+           pane is the only main content; the file list is a complementary
+           aside beside it. -->
+      <h1 class="visually-hidden">Draft</h1>
       <!-- One row. The toggle opens the file sidebar; everything about the
            file lives there, so the header shows no label for it.  -->
       <div class="pane-header" id="pane-header">
@@ -112,7 +116,7 @@
       <!-- Remarks about a place in the text stand next to that place. Below
            the rail's breakpoint the same cards move into the panel. -->
       <aside class="rail" id="rail" aria-label="Remarks on the draft" hidden></aside>
-    </div>
+    </main>
 
   </div>
 

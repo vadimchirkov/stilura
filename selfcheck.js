@@ -161,6 +161,13 @@ assert.equal(renderMarkdown('call style_score now'), '<p>call style_score now</p
 // The English spellchecker skips non-Latin drafts.
 assert.equal(isLatinScript('The bakery closed'), true);
 assert.equal(isLatinScript('Пекарня закрылась в марте'), false);
+// The fast path counts Latin-script matches once; numeral signs are the one
+// thing that count includes and letters do not, so they must not flip the
+// verdict for a Cyrillic draft.
+assert.equal(isLatinScript('Ⅻ Ⅻ Ⅻ'), true);
+assert.equal(isLatinScript('Ⅻ Привет мир'), false);
+assert.equal(isLatinScript('hello Привет'), false);
+assert.equal(isLatinScript('hello world Привет'), true);
 
 // Spelling marks: real typos are flagged with exact offsets, clean prose and
 // all-caps acronyms are left alone, and a non-Latin draft is skipped entirely.

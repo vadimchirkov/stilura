@@ -10,8 +10,19 @@ export function desktopStorage(directory) {
     read() {
       const entries = [];
       for (const name of fs.readdirSync(directory).filter(name => /^[a-f0-9]{64}\.json$/.test(name))) {
-        const item = JSON.parse(fs.readFileSync(path.join(directory, name), 'utf8'));
-        if (typeof item.key !== 'string' || typeof item.value !== 'string') throw new Error('Invalid desktop backup');
+        const file = path.join(directory, name);
+        let item;
+        try { item = JSON.parse(fs.readFileSync(file, 'utf8')); }
+        catch { item = null; }
+        if (!item || typeof item.key !== 'string' || typeof item.value !== 'string') {
+          // One unreadable entry used to fail the whole read, and the desktop
+          // window lost every setting and its draft along with it. Keep the
+          // bytes aside under a name this loop ignores and carry on: the other
+          // entries are still good, and the broken key is written again the
+          // next time the page saves it.
+          try { fs.renameSync(file, `${file}.corrupt-${Date.now()}`); } catch {}
+          continue;
+        }
         entries.push([item.key, item.value]);
       }
       const migrated = migrateStorageEntries(entries);

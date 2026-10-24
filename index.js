@@ -10,6 +10,7 @@
 
 import http  from 'http';
 import fs    from 'fs';
+import { gzipSync } from 'node:zlib';
 import path  from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -111,7 +112,15 @@ const DRAFT_FILE = process.env.DRAFT_FILE || path.join(CWD, 'draft.md');
 // Unqualified /draft stays on the launch file. Each tab names its own file;
 // opening one must never retarget saves made by another tab or agent.
 const sessions = documentSessions();
-const draftStore = sessions.get(DRAFT_FILE);
+// Verify the advertised owner before trusting it: a crashed server can leave
+// a session file whose pid now belongs to some other program.
+let draftStore;
+try { draftStore = await sessions.getVerified(DRAFT_FILE); }
+catch (error) {
+  if (error.status !== 409) throw error;
+  console.error(`${error.message}\n  Close the other Stilura window, or delete ${DRAFT_FILE}.stilura-session if nothing is running.`);
+  process.exit(1);
+}
 
 // ─── Workspace files ───────────────────────────────────────────────────────
 // The sidebar lists the Markdown and text files sitting next to the draft,
@@ -134,12 +143,12 @@ function workspaceFile(name) {
   return resolved;
 }
 
-function requestedDraft(url) {
+async function requestedDraft(url) {
   const name = url.searchParams.get('name');
   if (name === null || name === path.basename(DRAFT_FILE)) return draftStore;
   const file = workspaceFile(name);
   if (!file) throw Object.assign(new Error('Open a Markdown or text file by name.'), { status: 400 });
-  return sessions.get(file);
+  return sessions.getVerified(file);
 }
 
 // Two-line card preview: the first ~160 chars of actual prose. Markup is
@@ -193,7 +202,11 @@ const MIME = {
   '.dic':   'text/plain; charset=utf-8',
 };
 
-function serveStatic(res, filePath) {
+// Static files are kept in memory and compressed once per version: the bundle
+// is the size of a small app and gzip takes it to a third, while a reload
+// revalidates it with an ETag instead of downloading it again.
+const assets = new Map();
+function serveStatic(req, res, filePath) {
   const ext  = path.extname(filePath);
   const mime = MIME[ext] || 'text/plain';
   // Fonts and the spelling dictionary never change under a given name; the
@@ -201,14 +214,31 @@ function serveStatic(res, filePath) {
   // against a new server is the classic post-upgrade bug. Revalidate it on
   // each load.
   const cache = ['.woff2', '.aff', '.dic'].includes(ext) ? 'public, max-age=31536000, immutable' : 'no-cache';
+  let asset;
   try {
-    const data = fs.readFileSync(filePath);
-    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': cache });
-    res.end(data);
+    const stat = fs.statSync(filePath);
+    asset = assets.get(filePath);
+    if (!asset || asset.mtimeMs !== stat.mtimeMs || asset.size !== stat.size) {
+      const data = fs.readFileSync(filePath);
+      const compressible = data.length > 1024 && /^(text\/|application\/(javascript|json)|image\/svg)/.test(mime);
+      asset = { mtimeMs: stat.mtimeMs, size: stat.size, data, gzip: compressible ? gzipSync(data) : null };
+      assets.set(filePath, asset);
+    }
   } catch {
     res.writeHead(404);
     res.end('Not found');
+    return;
   }
+  const etag = `W/"${asset.size.toString(16)}-${Math.floor(asset.mtimeMs).toString(16)}"`;
+  const headers = { 'Content-Type': mime, 'Cache-Control': cache, ETag: etag, Vary: 'Accept-Encoding' };
+  if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return; }
+  if (asset.gzip && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
+    res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', 'Content-Length': asset.gzip.length });
+    res.end(asset.gzip);
+    return;
+  }
+  res.writeHead(200, { ...headers, 'Content-Length': asset.data.length });
+  res.end(asset.data);
 }
 
 function sendJson(res, status, value) {
@@ -389,7 +419,7 @@ async function handleRequest(req, res) {
   //
   if (url.pathname === '/draft/live') {
     try {
-      const session = requestedDraft(url);
+      const session = await requestedDraft(url);
       if (req.headers['x-stilura-session'] && req.headers['x-stilura-session'] !== session.token) return sendJson(res, 403, { error: 'Document session changed' });
       if (req.method === 'GET') {
         if (!url.searchParams.has('since')) return sendJson(res, 200, session.read());
@@ -422,13 +452,13 @@ async function handleRequest(req, res) {
   }
   if (url.pathname === '/draft') {
     if (req.method === 'GET') {
-      sendJson(res, 200, { ...requestedDraft(url).read(), name: url.searchParams.get('name') ?? path.basename(DRAFT_FILE) });
+      sendJson(res, 200, { ...(await requestedDraft(url)).read(), name: url.searchParams.get('name') ?? path.basename(DRAFT_FILE) });
       return;
     }
     if (req.method === 'PUT') {
       try {
         const body = await readBody(req);
-        sendJson(res, 200, { saved: true, ...requestedDraft(url).write(body.text, body.revision) });
+        sendJson(res, 200, { saved: true, ...(await requestedDraft(url)).write(body.text, body.revision) });
       } catch (error) {
         console.error('[/draft]', error.message);
         sendJson(res, error.status || 500, { error: fsErrorMessage(error), current: error.current });
@@ -436,7 +466,7 @@ async function handleRequest(req, res) {
       return;
     }
   }
-  if (req.method === 'GET' && url.pathname === '/draft/history') return sendJson(res, 200, { snapshots: requestedDraft(url).history() });
+  if (req.method === 'GET' && url.pathname === '/draft/history') return sendJson(res, 200, { snapshots: (await requestedDraft(url)).history() });
 
   if (req.method === 'GET' && url.pathname === '/files') {
     let entries;
@@ -536,19 +566,19 @@ async function handleRequest(req, res) {
 
   // ── Static
   if (req.method === 'GET') {
-    if      (url.pathname === '/')          serveStatic(res, path.join(PUBLIC, 'index.html'));
-    else if (url.pathname === '/style.css') serveStatic(res, path.join(PUBLIC, 'style.css'));
-    else if (url.pathname === '/app.js')    serveStatic(res, path.join(PUBLIC, 'app.js'));
-    else if (url.pathname === '/logo-tile.png')       serveStatic(res, path.join(PUBLIC, 'logo-tile.png'));
-    else if (url.pathname === '/logo-mark.png')       serveStatic(res, path.join(PUBLIC, 'logo-mark.png'));
-    else if (url.pathname === '/logo-mark-white.png') serveStatic(res, path.join(PUBLIC, 'logo-mark-white.png'));
+    if      (url.pathname === '/')          serveStatic(req, res, path.join(PUBLIC, 'index.html'));
+    else if (url.pathname === '/style.css') serveStatic(req, res, path.join(PUBLIC, 'style.css'));
+    else if (url.pathname === '/app.js')    serveStatic(req, res, path.join(PUBLIC, 'app.js'));
+    else if (url.pathname === '/logo-tile.png')       serveStatic(req, res, path.join(PUBLIC, 'logo-tile.png'));
+    else if (url.pathname === '/logo-mark.png')       serveStatic(req, res, path.join(PUBLIC, 'logo-mark.png'));
+    else if (url.pathname === '/logo-mark-white.png') serveStatic(req, res, path.join(PUBLIC, 'logo-mark-white.png'));
     else if (url.pathname.startsWith('/fonts/')) {
       const fontFile = path.basename(url.pathname);
-      serveStatic(res, path.join(PUBLIC, 'fonts', fontFile));
+      serveStatic(req, res, path.join(PUBLIC, 'fonts', fontFile));
     }
     else if (url.pathname.startsWith('/dictionary/')) {
       const dictFile = path.basename(url.pathname);
-      serveStatic(res, path.join(PUBLIC, 'dictionary', dictFile));
+      serveStatic(req, res, path.join(PUBLIC, 'dictionary', dictFile));
     }
     else { res.writeHead(404); res.end('Not found'); }
     return;
@@ -867,4 +897,9 @@ if (SIDECAR) {
 }
 
 listen(PORT);
+// `exit` does not run for a signalled process: Ctrl-C or a closing window left
+// the session claim behind, and the next launch had to work out whether it was
+// still real. Clean up on the way out, then exit as usual.
+const shutdown = () => { sessions.close(); process.exit(0); };
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(signal, shutdown);
 process.on('exit', () => sessions.close());

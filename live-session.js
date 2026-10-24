@@ -15,14 +15,53 @@ const alive = pid => {
   try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
 };
 
+// Remove an advertisement, but only the one we looked at: between the check
+// and the unlink another server may have claimed the document.
+function forgetSession(file, token) {
+  const name = sessionFile(file);
+  try {
+    if (token !== undefined && JSON.parse(fs.readFileSync(name, 'utf8')).token !== token) return;
+    fs.unlinkSync(name);
+  } catch {}
+}
+
+// A session file is a claim by a process. An unreadable or malformed one
+// claims nothing and must not outlive its writer: left in place it would tell
+// every later launch that the draft is open somewhere until the file is
+// removed by hand.
 export function readSessionAddress(file) {
   let address;
   try { address = JSON.parse(fs.readFileSync(sessionFile(file), 'utf8')); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-  if (!Number.isInteger(address.pid) || address.pid <= 0 || typeof address.token !== 'string') throw bad('Invalid document session');
-  const url = new URL(address.url);
-  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password) throw bad('Invalid document session address');
-  return alive(address.pid) ? address : null;
+  catch (error) {
+    if (error.code === 'ENOENT') return null;
+    forgetSession(file);
+    return null;
+  }
+  let valid = false;
+  try {
+    const url = new URL(address.url);
+    valid = Number.isInteger(address.pid) && address.pid > 0 && typeof address.token === 'string'
+      && url.protocol === 'http:' && url.hostname === '127.0.0.1' && !url.username && !url.password;
+  } catch { /* not a URL */ }
+  if (!valid) { forgetSession(file); return null; }
+  if (alive(address.pid)) return address;
+  forgetSession(file);
+  return null;
+}
+
+// The pid in a session file is only a hint: operating systems reuse numbers,
+// and the process that holds the draft can be gone while its pid belongs to
+// something else by the next launch. Ask the advertised server itself before
+// deciding the document is held.
+async function answers(address) {
+  try {
+    const response = await fetch(address.url, {
+      headers: { 'X-Stilura-Session': address.token },
+      signal: AbortSignal.timeout(1500),
+    });
+    await response.body?.cancel();
+    return response.ok;
+  } catch { return false; }
 }
 
 function atomicJson(file, value) {
@@ -50,6 +89,16 @@ export function documentSessions() {
   }
   return {
     get,
+    // Same as get, but a claim whose process looks alive is confirmed by the
+    // server it advertises. Only waits when a foreign claim is on disk, so
+    // opening a draft you hold yourself stays synchronous.
+    async getVerified(filename) {
+      const store = documentStore(filename), file = store.read().path;
+      if (sessions.has(file)) return sessions.get(file);
+      const other = readSessionAddress(file);
+      if (other && other.pid !== process.pid && !await answers(other)) forgetSession(file, other.token);
+      return get(filename);
+    },
     listen(address) { url = address; for (const session of sessions.values()) session.advertise(url); },
     close() { for (const session of sessions.values()) session.close(); },
   };
@@ -66,7 +115,17 @@ export function createSession(store, { trackChanges = false } = {}) {
     const saved = JSON.parse(fs.readFileSync(notesFile, 'utf8'));
     if (!Array.isArray(saved.notes)) throw bad('Invalid saved notes');
     notes = saved.notes; notesReady = true;
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      // Unreadable notes used to stop the session from opening at all, which
+      // turned one bad byte into a draft that could not be edited. The text
+      // itself is intact in the document; keep the notes aside for the writer
+      // and start with an empty margin.
+      const aside = `${notesFile}.corrupt-${Date.now()}`;
+      try { fs.renameSync(notesFile, aside); console.error(`[notes] Unreadable notes kept as ${aside}`); }
+      catch { /* the original error is the one worth reporting */ }
+    }
+  }
   for (const note of notes) if (!note.resolved && (!note.work || note.work.status === 'working')) queueNote(note);
   const version = () => baseVersion + updates.length;
   const revision = () => `${epoch}:${version()}:${notesVersion}`;

@@ -79,11 +79,14 @@ curl -s -X POST http://127.0.0.1:$PORT/suggest \
   -H 'Content-Type: application/json' \
   -d '{"document":"...","cursor":456}'
 
-# Chat about the draft (streams SSE: {"text":"..."} deltas, then [DONE])
-curl -sN -X POST http://127.0.0.1:$PORT/chat \
+# Suggest: short continuation at cursor (character offset). May be "".
+curl -s -X POST http://127.0.0.1:$PORT/suggest \
   -H 'Content-Type: application/json' \
-  -d '{"document":"...","messages":[{"role":"user","content":"..."}]}'
+  -d '{"document":"...","cursor":456}'
 ```
+
+Chat (`POST /chat`) is paused: the route answers `410`. Read and write the
+draft directly, or use `/rewrite`, `/ask` and `/suggest`.
 
 Limits: AI routes accept drafts up to 60,000 characters; files cap at 1 MB.
 

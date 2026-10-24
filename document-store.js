@@ -37,6 +37,32 @@ export function documentStore(filename) {
   const file = fs.existsSync(resolved) ? fs.realpathSync(resolved) : path.join(fs.realpathSync(path.dirname(resolved)), path.basename(resolved));
   migrateDraftFiles(file);
   const historyDir = `${file}.stilura-history`;
+  const busy = lock => Object.assign(new Error(`Another save is active. If Stilura crashed, close its processes and remove ${lock}.`), { status: 423 });
+  // Only one save holds the lock, and only for the few milliseconds a write
+  // takes. A lock that outlived its process is a crash leftover and excludes
+  // nobody; asking the writer to find and delete it by hand was the only way
+  // out of that state before.
+  const LOCK_TTL = 60_000;
+  function lockIsStale(lock) {
+    let stat, owner = null;
+    try { stat = fs.statSync(lock); } catch { return true; }
+    try { owner = JSON.parse(fs.readFileSync(lock, 'utf8')); } catch { /* a lock from an older version has no body */ }
+    if (owner && Number.isInteger(owner.pid) && owner.pid > 0 && owner.pid !== process.pid) {
+      try { process.kill(owner.pid, 0); return false; }
+      catch (error) { return error.code === 'ESRCH'; }
+    }
+    return Date.now() - stat.mtimeMs > LOCK_TTL;
+  }
+  function takeLock(lock) {
+    try { return fs.openSync(lock, 'wx', 0o600); }
+    catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      if (!lockIsStale(lock)) throw busy(lock);
+      fs.rmSync(lock, { force: true });
+      try { return fs.openSync(lock, 'wx', 0o600); }
+      catch (again) { throw again.code === 'EEXIST' ? busy(lock) : again; }
+    }
+  }
   function read() {
     let text;
     try { text = fs.readFileSync(file, 'utf8'); }
@@ -65,14 +91,12 @@ export function documentStore(filename) {
     if (typeof text !== 'string' || typeof revision !== 'string') throw Object.assign(new Error('text and revision are required strings'), { status: 400 });
     if (Buffer.byteLength(text) > MAX_DOCUMENT_BYTES) throw Object.assign(new Error('Draft exceeds 1 MB'), { status: 413 });
     const lock = `${file}.stilura-lock`;
-    let fd;
-    try { fd = fs.openSync(lock, 'wx', 0o600); }
-    catch (error) {
-      if (error.code === 'EEXIST') throw Object.assign(new Error(`Another save is active. If Stilura crashed, close its processes and remove ${lock}.`), { status: 423 });
-      throw error;
-    }
+    const fd = takeLock(lock);
     const temp = `${file}.${randomUUID()}.tmp`;
     try {
+      // Record the owner so the next process can tell a live save from a
+      // crash leftover without guessing from the file's age alone.
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
       const before = read();
       if (before.revision !== revision) throw Object.assign(new Error('The file changed. Choose which copy to keep.'), { status: 409, current: before });
       if (before.exists && before.text === text) return before;
@@ -90,7 +114,7 @@ export function documentStore(filename) {
     } finally {
       if (fs.existsSync(temp)) fs.unlinkSync(temp);
       fs.closeSync(fd);
-      fs.unlinkSync(lock);
+      fs.rmSync(lock, { force: true });
     }
   }
   return { read, write, history };
