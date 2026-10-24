@@ -1589,7 +1589,7 @@ async function generateFromLine(view, line, instruction) {
       if (!current()) { job.abort(); return; }
       if (chunk.error) throw new Error(chunk.error);
       answer = typeof chunk.replace === 'string' ? chunk.replace : answer + (chunk.text ?? '');
-      view.dispatch({ effects: setGenerationFx.of({ ...view.state.field(generationField), text: answer, previousText: null }) });
+      view.dispatch({ effects: setGenerationFx.of({ ...view.state.field(generationField), text: answer.trim(), previousText: null }) });
     }
     if (!current()) return;
     if (!answer.trim()) throw new Error('The model returned no text.');
