@@ -5,9 +5,8 @@ import vm from 'node:vm';
 import { EditorState, StateField, StateEffect, Transaction } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
 import { history, undo, isolateHistory } from '@codemirror/commands';
-import { appSection } from './app-source.mjs';
+import { appSection, generateIn } from './app-source.mjs';
 
-const section = appSection('let generationJob = null;', '// ─── Read-only compartment');
 const draft = 'Opening.\n\n/Describe a quiet garden.\n\nEnding.';
 function setup(beforeDone = async () => {}) {
   const jobs = new Set(), notices = [], requests = [], snapshots = [];
@@ -30,7 +29,7 @@ function setup(beforeDone = async () => {}) {
       yield { text: 'garden.' };
     },
   });
-  vm.runInContext(section, context);
+  generateIn(context);
   const field = vm.runInContext('generationField', context);
   view.state = EditorState.create({ doc: draft, selection: { anchor: draft.indexOf('\n\nEnding.') }, extensions: [field, history()] });
   view.dispatch = spec => {
@@ -173,7 +172,8 @@ for (const blocked of ['inside', 'paused', 'readonly', 'switch']) {
 // Waiting and regeneration show only the shared pixel loader.
 {
   const test = setup();
-  test.context.document = { createElement: tag => ({ tag, children: [], attributes: {}, textContent: '',
+  // The widget is module code: it builds with the page's document.
+  globalThis.document = { createElement: tag => ({ tag, children: [], attributes: {}, textContent: '',
     style: { setProperty(key, value) { this[key] = value; } },
     setAttribute(key, value) { this.attributes[key] = value; },
     addEventListener() {},
@@ -202,6 +202,7 @@ for (const blocked of ['inside', 'paused', 'readonly', 'switch']) {
   const inline = new Widget({ job: {}, phase: 'review', text: 'First line.\nSecond line.', inline: true });
   assert.equal(inline.toDOM().tag, 'span');
   assert.equal(inline.lineBreaks, 1);
+  delete globalThis.document;
 }
 
 // Keyboard review applies only at the proposal, not while writing another paragraph.
@@ -228,7 +229,6 @@ assert.equal(missing.view.state.field(missing.field), null);
 
 // Only an explicit complete command starts a request; ordinary prose stays editable.
 const commands = setup();
-commands.context.generateFromLine = () => { throw new Error('Unexpected generation'); };
 commands.view.dispatch({ selection: { anchor: 2 } });
 assert.equal(commands.context.handleWrite(commands.view), false);
 commands.view.state = EditorState.create({ doc: '/ ', selection: { anchor: 2 }, extensions: [commands.field] });
@@ -236,6 +236,8 @@ assert.equal(commands.context.handleWrite(commands.view), true);
 assert.match(commands.notices.at(-1), /Write a request/);
 commands.view.state = EditorState.create({ doc: '/Test request', selection: { anchor: 3 }, extensions: [commands.field] });
 assert.equal(commands.context.handleWrite(commands.view), false, 'Enter in the middle of a command remains a newline');
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(commands.requests.length, 0, 'no generation was started');
 
 // A slash starts the request directly; typing and moving the caret update its highlight.
 {
@@ -254,13 +256,15 @@ assert.equal(commands.context.handleWrite(commands.view), false, 'Enter in the m
   assert.deepEqual(parts(state), ['cm-generation-request', 'hidden 0-1']);
   state = state.update({ changes: { from: 0, to: 1 } }).state;
   assert.equal(state.field(field).size, 0);
-  let captured;
-  test.context.generateFromLine = (_view, line, request) => { captured = { line: line.text, request }; };
   for (const text of ['/Напиши вступление', '/ Напиши вступление', '  /  Напиши вступление  ']) {
     test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field] });
+    const asked = test.requests.length;
     assert.equal(test.context.handleWrite(test.view), true);
-    assert.equal(captured.request, 'Напиши вступление');
-    assert.equal(captured.line, text.slice(text.indexOf('/')));
+    while (test.jobs.size) await new Promise(resolve => setImmediate(resolve));
+    const { body } = test.requests[asked];
+    assert.equal(body.instruction, 'Напиши вступление');
+    assert.equal(body.from, text.indexOf('/'), 'the request starts at the slash');
+    assert.equal(body.cursor, text.length);
   }
   test.view.state = EditorState.create({ doc: 'Обычный текст', selection: { anchor: 12 }, extensions: [test.field] });
   assert.equal(test.context.handleWrite(test.view), false);
@@ -303,13 +307,10 @@ assert.equal(commands.context.handleWrite(commands.view), false, 'Enter in the m
   test.view.composing = true;
   assert.equal(test.context.generationKey(test.view, 'Regenerate'), false);
   test.view.composing = false;
-  const original = test.context.generateFromLine;
-  let regenerated;
-  test.context.generateFromLine = (...args) => regenerated = original(...args);
   test.context.sseChunks = async function* () { yield { text: 'A different garden.' }; };
   assert.equal(test.context.generationKey(test.view, 'Regenerate'), true);
   assert.equal(test.context.generationKey(test.view, 'Regenerate'), true);
-  await regenerated;
+  while (test.jobs.size) await new Promise(resolve => setImmediate(resolve));
   assert.equal(test.requests.length, 2, 'only one regeneration starts');
   assert.equal(test.requests[1].body.previous, 'A quiet garden.');
   assert.equal(test.view.state.doc.toString(), draft, 'R is not inserted into the request');

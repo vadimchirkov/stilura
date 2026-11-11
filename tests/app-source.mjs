@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
+import * as generate from '../src/features/generate.js';
 
 // Some tests run a section of src/app.js cut out by text markers. A marker
 // that moved or was renamed must fail loudly here, not hand the test an empty
@@ -12,4 +14,25 @@ export function appSection(start, end, { last = false } = {}) {
   const to = appSource.indexOf(end, from);
   assert(to > from, `src/app.js has no section end after ${JSON.stringify(start)}: ${JSON.stringify(end)}`);
   return appSource.slice(from, to);
+}
+
+// The vm harnesses keep main()'s names as globals of a context. This builds
+// the generation feature from them, read at call time so a test can swap one
+// later, and puts its functions and state fields back into the context for
+// the app.js sections that call them.
+export function generateIn(context) {
+  const late = name => (...args) => context[name](...args);
+  const feature = generate.createGenerate({
+    jobs: context.jobs,
+    documentKey: () => context.documentKey,
+    loading: () => context.loadingDocument,
+    paused: () => context.loadingDocument || context.savePaused,
+    passageFx: () => vm.runInContext('typeof setPassageFx === "undefined" ? null : setPassageFx', context),
+    fetch: late('fetch'),
+    ...Object.fromEntries(['cancelSuggestion', 'closePassage', 'combinedContext', 'currentAgent', 'ensureAgent',
+      'startJob', 'finishJob', 'notify', 'notifyProblem', 'requestPassage', 'saveSnapshot', 'sseChunks'].map(name => [name, late(name)])),
+  });
+  const { setGenerationFx, generationField, slashRequest, requestField } = generate;
+  Object.assign(context, feature, { setGenerationFx, generationField, slashRequest, requestField });
+  return feature;
 }

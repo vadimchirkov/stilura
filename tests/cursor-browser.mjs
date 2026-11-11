@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { loadPuppeteer } from './browser-driver.mjs';
-import { appSection } from './app-source.mjs';
 
 const puppeteer = loadPuppeteer();
 
 // Exercise the actual widgets and theme with CodeMirror's cursor measurement.
-const widget = appSection('class GenerationWidget', 'const generationField');
 const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
-  import { createGenerationLoader } from './extension/editor-ui.js';
   import { EditorState } from '@codemirror/state';
-  import { EditorView, WidgetType, Decoration, drawSelection } from '@codemirror/view';
+  import { EditorView, Decoration, drawSelection } from '@codemirror/view';
   import { createEditorTheme } from './src/editor/theme.js';
+  import { createGenerate } from './src/features/generate.js';
   const editorTheme = createEditorTheme(false);
-  ${widget}
+  const { GenerationWidget } = createGenerate({ jobs: new Set(), documentKey: () => 'fixture', loading: () => false,
+    paused: () => false, passageFx: () => null, saveSnapshot() {}, notify() {},
+    cancelSuggestion() {}, closePassage() {}, combinedContext: () => '', currentAgent: () => ({}), ensureAgent: async () => true, startJob: () => new AbortController(), finishJob() {}, notifyProblem() {}, requestPassage() {}, sseChunks() {} });
   window.show = (value) => {
     window.view?.destroy();
     const doc = value.inline ? 'Opening /request' : '/request';

@@ -49,6 +49,7 @@ try {
   }
   const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
     import { createNotices, modelError } from './src/notices.js';
+    import { createGenerate, setGenerationFx } from './src/features/generate.js';
     const chatPanel = document.getElementById('chat');
     const chatInput = document.getElementById('chat-input');
     const editFeedback = document.getElementById('edit-feedback');
@@ -60,24 +61,22 @@ try {
       focusEditor() {}, openSettings: tab => { window.openedSettings = tab; } });
     const { notify, notifyProblem } = notices;
     ${appSection('function setSuggestStatus(', 'let tabId;')}
-    let generationJob = null, documentKey = 'test', loadingDocument = false, savePaused = false;
-    const generationField = {}, jobs = new Set();
-    const startJob = () => { const job = new AbortController(); jobs.add(job); return job; };
-    const finishJob = job => jobs.delete(job);
-    const ensureAgent = async () => true, cancelSuggestion = () => {};
-    const currentAgent = () => ({}), combinedContext = () => '';
-    const setGenerationFx = { of: value => ({ generation: value }) };
-    const clearGhostFx = { of: () => ({}) };
-    const EditorView = { announce: { of: () => ({}) } };
+    const jobs = new Set();
     const error402 = '402 {"type":"error","error":{"type":"api_error","message":"Upstream request failed: Insufficient account funds"}}';
-    const fetch = async () => ({ ok: true });
-    async function* sseChunks() { yield { error: error402 }; }
-    ${appSection('async function generateFromLine(', '// ─── Read-only compartment')}
+    const { generateFromLine } = createGenerate({
+      jobs, documentKey: () => 'test', loading: () => false, paused: () => false, passageFx: () => null,
+      startJob: () => { const job = new AbortController(); jobs.add(job); return job; },
+      finishJob: job => jobs.delete(job), ensureAgent: async () => true, cancelSuggestion() {},
+      currentAgent: () => ({}), combinedContext: () => '', notify, notifyProblem,
+      closePassage() {}, requestPassage() {}, saveSnapshot() {},
+      fetch: async () => ({ ok: true }),
+      async *sseChunks() { yield { error: error402 }; },
+    });
     window.checkWriteError = async () => {
       notify('Earlier instruction', { sticky: true });
       let target = null;
       const view = { state: { readOnly: false, doc: { toString: () => '/Write.', lineAt: () => ({ from: 0 }) }, field: () => target },
-        dispatch({ effects }) { for (const effect of effects) if ('generation' in effect) target = effect.generation; } };
+        dispatch({ effects }) { for (const effect of [effects].flat()) if (effect.is(setGenerationFx)) target = effect.value; } };
       await generateFromLine(view, { from: 0, to: 7, text: '/Write.' }, 'Write.');
       return { text: editFeedback.textContent, tone: editFeedback.dataset.tone, sticky: notices.state().sticky, timer: notices.state().timer };
     };

@@ -1,19 +1,17 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { loadPuppeteer } from './browser-driver.mjs';
-import { appSection } from './app-source.mjs';
 
 const puppeteer = loadPuppeteer();
-const section = appSection('let generationJob = null;', '// ─── Read-only compartment');
 const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
-  import { createGenerationLoader } from './extension/editor-ui.js';
-  import { EditorState, StateField, StateEffect, Prec } from '@codemirror/state';
-  import { EditorView, WidgetType, Decoration, keymap } from '@codemirror/view';
-  import { history, defaultKeymap, historyKeymap, isolateHistory } from '@codemirror/commands';
-  import { slashCommand, reviewAction } from './extension/writing-rules.js';
-  const documentKey = 'fixture', loadingDocument = false, savePaused = false;
-  const saveSnapshot = () => {}, notify = () => {}, jobs = new Set();
-  ${section}
+  import { EditorState, Prec } from '@codemirror/state';
+  import { EditorView, Decoration, keymap } from '@codemirror/view';
+  import { history, defaultKeymap, historyKeymap } from '@codemirror/commands';
+  import { createGenerate, generationField, setGenerationFx } from './src/features/generate.js';
+  const documentKey = 'fixture';
+  const { GenerationWidget, generationInput } = createGenerate({ jobs: new Set(), documentKey: () => documentKey,
+    loading: () => false, paused: () => false, passageFx: () => null, saveSnapshot() {}, notify() {},
+    cancelSuggestion() {}, closePassage() {}, combinedContext: () => '', currentAgent: () => ({}), ensureAgent: async () => true, startJob: () => new AbortController(), finishJob() {}, notifyProblem() {}, requestPassage() {}, sseChunks() {} });
   window.show = inline => {
     window.view?.destroy();
     const doc = inline ? 'Opening /write an intro' : '/write an intro';

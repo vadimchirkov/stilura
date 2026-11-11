@@ -159,5 +159,7 @@ export function createSuggest({
     }
   }
 
-  return { cancelSuggestion, suggestSchedule, suggestionUpdate, suggestFetch };
+  // A continuation is waiting to be asked for or is on its way.
+  const pending = () => suggestTimer !== null || suggestAbort !== null;
+  return { cancelSuggestion, suggestSchedule, suggestionUpdate, suggestFetch, pending };
 }
