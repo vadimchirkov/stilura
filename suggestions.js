@@ -16,27 +16,21 @@ export function cursorWindow(document, cursor) {
 
 // Shared by the HTTP route and the evaluation runner so they test the same task.
 //
-// `manual` is the writer pressing Continue rather than the debounce firing.
-// Silence is the right answer for something nobody asked for; for an explicit
-// press it reads as a broken button, so a finished sentence stops being a
-// reason to abstain. The grounding rules do not move — an asked-for
-// continuation may invent no more than an offered one.
-export function suggestionPrompts({ document = '', cursor = document.length, context, brief, style, manual = false }) {
-  const thought = manual
-    ? 'Stay on the current thought; when it is already finished, open the next sentence its own line of thought calls for.'
-    : 'Stay on the last thought.';
-  const silence = manual
-    ? 'Return an empty text when the author\'s intent is unclear or continuing would require inventing a fact, source, number, experience or intention. A finished sentence is not itself a reason for silence — the writer asked for the next move.'
-    : 'Return an empty text when the thought is complete, the author\'s intent is unclear, or continuing would require inventing a fact, source, number, experience or intention. Silence is better than filler.';
-  // After a finished sentence many openings are equally possible, so the
-  // automatic rule below would abstain every time. An explicit press asked for
-  // one: take the likeliest, kept to what the draft already carries.
+// Automatic continuations and an explicit press follow the same rules. With
+// the stricter rules automatic ones used to have (abstain when the thought is
+// complete or several completions are equally possible), ChatGPT models
+// stayed silent at most pauses and the feature looked broken. The grounding
+// rules do not move: a continuation may still invent no fact, source,
+// number, experience or intention.
+export function suggestionPrompts({ document = '', cursor = document.length, context, brief, style }) {
+  const thought = 'Stay on the current thought; when it is already finished, open the next sentence its own line of thought calls for.';
+  const silence = 'Return an empty text only when continuing would need a fact, number, name, source or quotation the draft does not contain. A finished sentence or an open-ended one is not itself a reason for silence.';
+  // After a finished sentence many openings are equally possible; take the
+  // likeliest, kept to what the draft already carries.
   const atSentenceEnd = /[.!?…]["”’')\]]*\s*$/u.test(document.slice(0, cursor));
-  const choice = manual
-    ? (atSentenceEnd
-      ? 'The sentence before the cursor is finished and the writer asked for the next one. Do not return NONE. Return only its first two to six words: a connective or a noun the draft already names, which commits to no new claim and leaves the point to the author. Example after "We rolled back within five minutes." → TEXT: The migration.'
-      : 'If several completions are possible, take the one the draft most directly supports.')
-    : 'If materially different completions are equally possible, abstain.';
+  const choice = atSentenceEnd
+    ? 'The sentence before the cursor is finished. Do not return NONE. Return only the first two to six words of the next sentence: a connective or a noun the draft already names, which commits to no new claim and leaves the point to the author. Example after "We rolled back within five minutes." → TEXT: The migration.'
+    : 'If several completions are possible, take the one the draft most directly supports.';
   const near = cursorWindow(document, cursor);
   return {
     systemPrompt: [
@@ -47,15 +41,15 @@ The writing brief sets audience, purpose and constraints, not facts to insert. U
 The local sentence and surrounding text determine what comes next. A brief never licenses invented claims, a new topic or a forced call to action.
 Let the continuation's length follow how well the material supports it, up to 15 words: a word or punctuation when that finishes the thought, a full clause or sentence when the draft or context clearly carries it further.
 ${silence}
-Complete grammar, punctuation, an unfinished word, or a consequence directly supported by the supplied facts. Never choose a decision or next event for the author. ${choice}
+Complete grammar, punctuation or an unfinished word, or finish the current sentence with a plausible clause in the author's voice that carries its own image or argument forward. Offer it as a suggestion the author can ignore; it may not add a fact, number, name, source or quotation the draft does not contain. ${choice}
 Specific wording must come from the supplied material. Reuse the objects actually named by the author; do not introduce a more specific type of an object or an unstated way it works. When the existing words in a quotation form a complete phrase, close the quotation instead of inventing more quoted words.
 Everything under TEXT BEFORE CURSOR and TEXT AFTER CURSOR is already written and stays in place. Return only the missing insertion, never a rewritten sentence or a copy of either side.
-Do not invent evidence or claims, restate the draft, add generic conclusions, or repeat or contradict the text after the cursor.
+Do not invent evidence, figures or sources, restate the draft, add generic conclusions, or repeat or contradict the text after the cursor.
 Return one line using exactly one of these formats, without commentary or Markdown fences:
 NONE — when there is no well-supported continuation (return only the word NONE).
 TEXT: followed by new words or punctuation. The editor handles word spacing.
 WORD: followed by ONLY the missing letters of the unfinished word immediately before the cursor, then any necessary punctuation. Do not repeat the letters already typed.
-Examples: an unknown decision after "We finally agreed to" → NONE.
+Examples: an unknown figure after "Revenue grew by" → NONE.
 Prefix "The window was already op" → WORD: en.
 Prefix ending in an already complete quoted phrase → TEXT: ”.
 The format label is not part of the draft. Preserve the author's quotation marks; they need no escaping.`,

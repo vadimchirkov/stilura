@@ -26,20 +26,17 @@
   {
     "id": "ru-complete-thought",
     "prefix": "Я выключил свет, закрыл дверь и ушёл. На сегодня всё.",
-    "empty": true,
-    "rubric": "Abstain. The passage has explicitly ended."
+    "rubric": "Continuations are bold: after an ended passage the opening of a next sentence is allowed. It must add no fact, figure, name or source."
   },
   {
     "id": "en-complete-thought",
     "prefix": "The key is under the blue pot. That is all you need to get inside.",
-    "empty": true,
-    "rubric": "Abstain rather than append a generic conclusion or another instruction."
+    "rubric": "Continuations are bold: the opening of a next sentence is allowed, but not a generic conclusion, a new fact, figure, name or source."
   },
   {
     "id": "ru-unknown-intention",
     "prefix": "Я долго думал о предложении и наконец решил",
-    "empty": true,
-    "rubric": "Do not decide on the author's behalf. Return empty text."
+    "rubric": "Continuations are bold: a plausible decision may be offered as a suggestion the author can ignore. It must add no figure, name or source."
   },
   {
     "id": "en-unknown-evidence",
@@ -61,8 +58,7 @@
   {
     "id": "ru-blank-paragraph",
     "prefix": "Посылку забрал. Коробка целая.\n\n",
-    "empty": true,
-    "rubric": "A blank paragraph is not permission to invent its topic. Abstain."
+    "rubric": "Continuations are bold: a blank paragraph may get an opening that follows the previous one. It must add no fact, figure, name or source."
   },
   {
     "id": "en-existing-suffix",
