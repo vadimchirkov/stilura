@@ -6,13 +6,13 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadPuppeteer } from './browser-driver.mjs';
 
-// Spelling marks are checked only when typing pauses. This runs the real page
+// Spelling and grammar marks (Harper) are checked only when typing pauses. This runs the real page
 // against a real draft so the whole path is covered: the initial pass, the
 // mapped marks that survive keystrokes, and the recheck that follows.
 const puppeteer = loadPuppeteer();
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stilura-spelling-'));
 const draft = path.join(directory, 'draft.md');
-fs.writeFileSync(draft, 'Teh quikc brown fox.\n');
+fs.writeFileSync(draft, 'Teh quikc brown fox. He go home.\n');
 
 const server = spawn(process.execPath, [fileURLToPath(new URL('../index.js', import.meta.url))], {
   cwd: directory,
@@ -53,7 +53,17 @@ try {
     return found;
   };
 
-  assert.deepEqual(await settled(['Teh', 'quikc']), ['Teh', 'quikc']);
+  assert.deepEqual(await settled(['Teh', 'quikc', 'go']), ['Teh', 'quikc', 'go']);
+
+  // A grammar mark offers Harper's fix; choosing it edits the draft.
+  const go = await page.$$eval('.cm-spell-marker', nodes => nodes.findIndex(node => node.textContent === 'go'));
+  await (await page.$$('.cm-spell-marker'))[go].click();
+  const fixes = await page.$$eval('#mark-bubble .mark-bubble-seg', nodes => nodes.map(node => node.textContent));
+  assert.deepEqual(fixes, ['goes', 'Ignore']);
+  await page.evaluate(() => document.querySelector('#mark-bubble .mark-bubble-seg').click());
+  assert.match(await page.$eval('.cm-content', node => node.textContent), /He goes home\./);
+  await page.waitForFunction(() => ![...document.querySelectorAll('.cm-spell-marker')].some(node => node.textContent === 'goes'), { timeout: 5000 });
+  assert.deepEqual(await marks(), ['Teh', 'quikc']);
 
   await page.evaluate(() => document.querySelector('.cm-content').focus());
   await page.keyboard.press('End');
@@ -64,7 +74,7 @@ try {
   assert.ok((await settled(['Anothr'])).includes('Anothr'), 'a word typed and left alone is marked after the pause');
 
   assert.deepEqual(errors, []);
-  console.log('Spelling browser checks passed: initial pass, marks mapped through typing, recheck after the pause.');
+  console.log('Spelling browser checks passed: initial pass, grammar fix, marks mapped through typing, recheck after the pause.');
 } finally {
   await browser.close();
   server.kill('SIGTERM');

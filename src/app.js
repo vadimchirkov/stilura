@@ -30,7 +30,7 @@ import { clampBubble, replacementTarget, newerVersion, resolveDrift, unwrapProse
 import { paragraphRanges, resolveNoteRange, mapNoteAnchors } from '../notes.js';
 import { reversible } from '../work.js';
 import { EDITS_OPEN, chatVisibleText, locateChatEdits, mapChatEdit, chatEditMatches } from '../chat-edits.js';
-import { loadSpellDictionary, noteSpellingAdded, spellingMarkers } from '../spellcheck.js';
+import { loadLinter, ignoreMarker, lintMarkers } from '../spellcheck.js';
 import { searchKeymap } from '@codemirror/search';
 import { hydrateIcons, icon } from './icons.js';
 import { openStorage } from './storage.js';
@@ -1089,18 +1089,15 @@ function ghostAccept(view) {
 
 // ─── Spelling marks ─────────────────────────────────────────────────────────
 //
-//  A deterministic, offline check for actual misspellings — distinct from the
-//  style tells above, which flag wording choices rather than errors. Fixes
-//  are instant word swaps and need no model call.
+//  A deterministic, offline check for spelling and grammar errors (Harper) —
+//  distinct from the style tells above, which flag wording choices rather
+//  than errors. Fixes are instant swaps and need no model call.
 //
-// ponytail: dictionary loads once at startup; a word added via the bubble's
-// "Ignore" only survives the tab session. Persist to localStorage if writers
-// hit the same false positive across reloads.
+// ponytail: "Ignore" only survives the tab session. Persist to localStorage
+// if writers hit the same false positive across reloads.
 let spellChecker = null;
+// Carries the markers of a finished check; the check itself is asynchronous.
 const refreshSpellFx = StateEffect.define();
-function visibleSpellMarkers(text) {
-  return spellingMarkers(text, spellChecker);
-}
 // Marks are plain ranges drawn by a view plugin, not a DecorationSet. Mapping
 // keeps an underline on the word it belongs to while typing, and re-reading
 // the quote keeps a click on it offering suggestions for the text that is
@@ -1114,13 +1111,13 @@ function mapSpellMarkers(markers, tr) {
   return out;
 }
 const spellMarkerField = StateField.define({
-  create: state => visibleSpellMarkers(state.doc.toString()),
+  create: () => [],
   update: (markers, tr) => {
     for (const effect of tr.effects) {
-      if (effect.is(refreshSpellFx)) return visibleSpellMarkers(tr.newDoc.toString());
+      if (effect.is(refreshSpellFx)) return effect.value;
     }
     // A keystroke moves the existing marks along with the text and leaves the
-    // dictionary alone; the full pass runs once typing pauses
+    // checker alone; the full pass runs once typing pauses
     // (scheduleSpellCheck). Checking every word in the draft on every key was
     // the largest single cost of typing a long document.
     return tr.docChanged ? mapSpellMarkers(markers, tr) : markers;
@@ -1135,8 +1132,18 @@ function scheduleSpellCheck() {
   clearTimeout(spellRecheck);
   spellRecheck = setTimeout(() => {
     spellRecheck = 0;
-    if (spellChecker) workView.dispatch({ effects: refreshSpellFx.of(null) });
+    runSpellCheck();
   }, SPELL_RECHECK_MS);
+}
+function runSpellCheck() {
+  if (!spellChecker) return;
+  const doc = workView.state.doc;
+  lintMarkers(doc.toString(), spellChecker).then(markers => {
+    // Typing during the check moved the text under these offsets: drop them,
+    // the mapped marks stay on screen, and check again after the pause.
+    if (workView.state.doc !== doc) scheduleSpellCheck();
+    else workView.dispatch({ effects: refreshSpellFx.of(markers) });
+  }).catch(error => console.warn('[spell]', error.message));
 }
 
 document.addEventListener('keydown', event => {
@@ -3129,13 +3136,12 @@ function showSpellBubble(marker, x, y) {
     if (workView.state.sliceDoc(marker.from, marker.to) !== marker.quote) return;
     workView.dispatch({ changes: { from: marker.from, to: marker.to, insert: suggestion }, userEvent: 'input.spellfix' });
   };
-  for (const suggestion of (spellChecker?.suggest(marker.quote) ?? []).slice(0, SPELL_SUGGESTIONS)) {
-    actions.append(bubbleButton(suggestion, () => replace(suggestion)));
+  for (const fix of marker.fixes.slice(0, SPELL_SUGGESTIONS)) {
+    actions.append(bubbleButton(fix.label, () => replace(fix.insert)));
   }
   actions.append(bubbleButton('Ignore', () => {
-    spellChecker?.add(marker.quote);
-    noteSpellingAdded(marker.quote);
-    workView.dispatch({ effects: refreshSpellFx.of(null) });
+    ignoreMarker(marker);
+    runSpellCheck();
   }));
   markBubble.replaceChildren(actions);
   placeBubble(x, y, textAnchor(marker.from, marker.to, x));
@@ -3619,13 +3625,13 @@ function textHighlights(state) {
   const flash = state.field(flashField);
   const mark = (value, className) => value && value.to > value.from
     ? Decoration.set([Decoration.mark({ class: className, ...(className === 'cm-passage-busy' ? { attributes: { 'aria-busy': 'true' } } : {}) }).range(value.from, value.to)]) : Decoration.none;
-  const markers = (field, className, attribute, title) => Decoration.set(state.field(field).map(value =>
-    Decoration.mark({ class: className, attributes: { [attribute]: String(value.from), title } }).range(value.from, value.to)), true);
+  const markers = (field, className, attribute) => Decoration.set(state.field(field).map(value =>
+    Decoration.mark({ class: className, attributes: { [attribute]: String(value.from), title: `${value.message} Click for suggestions.` } }).range(value.from, value.to)), true);
   const selectionMask = Decoration.mark({});
   // Later sets win: diagnostics < working range < native selection < loading.
   const sets = [
     state.field(markdownField), state.field(noteField, false) ?? Decoration.none,
-    markers(spellMarkerField, 'cm-spell-marker', 'data-spell-from', 'Possible misspelling — click for suggestions'),
+    markers(spellMarkerField, 'cm-spell-marker', 'data-spell-from'),
     mark(flash, 'cm-applied-flash'),
     mark(passage, 'cm-attached'), state.field(requestField),
     Decoration.set(state.selection.ranges.filter(range => !range.empty).map(range => selectionMask.range(range.from, range.to)), true),
@@ -3931,11 +3937,11 @@ workView.scrollDOM.appendChild(rail);
 // edit: the rail's tops are document coordinates, so follow the content.
 new ResizeObserver(() => layoutRail()).observe(workView.contentDOM);
 
-// The dictionary is a couple hundred KB; fetch it once in the background and
-// mark whatever is already on the page as soon as it lands.
-loadSpellDictionary().then(spell => {
-  spellChecker = spell;
-  workView.dispatch({ effects: refreshSpellFx.of(null) });
+// The checker binary is large; fetch it once in the background and mark
+// whatever is already on the page as soon as it is ready.
+loadLinter().then(linter => {
+  spellChecker = linter;
+  runSpellCheck();
 }).catch(error => notifyProblem({ say: 'Spellcheck is unavailable.', detail: error.message }, null, 'Try again', 'spell-error'));
 
 // ─── Persist ───────────────────────────────────────────────────────────────────

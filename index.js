@@ -83,8 +83,13 @@ if (fs.existsSync(path.join(ROOT, 'src/app.js'))) {
       bundle:      true,
       outfile:     path.join(ROOT, 'public/app.js'),
       format:      'iife',
+      // harper.js reads its binary with fs only under Node; the page fetches it.
+      external:    ['fs'],
       logLevel:    'warning',
     });
+    // The spell and grammar checker's binary, loaded by the page at runtime.
+    // Timestamps are kept so the ETag, and the browser's copy, survive restarts.
+    fs.cpSync(path.join(ROOT, 'node_modules/harper.js/dist/harper_wasm_slim_bg.wasm'), path.join(ROOT, 'public/harper.wasm'), { preserveTimestamps: true });
     console.log('[build] Frontend bundled ✓');
   } catch (e) {
     console.error('[build] Frontend build failed.\n', e.message);
@@ -198,8 +203,7 @@ const MIME = {
   '.png':   'image/png',
   '.woff2': 'font/woff2',
   '.woff':  'font/woff',
-  '.aff':   'text/plain; charset=utf-8',
-  '.dic':   'text/plain; charset=utf-8',
+  '.wasm':  'application/wasm',
 };
 
 // Static files are kept in memory and compressed once per version: the bundle
@@ -209,11 +213,10 @@ const assets = new Map();
 function serveStatic(req, res, filePath) {
   const ext  = path.extname(filePath);
   const mime = MIME[ext] || 'text/plain';
-  // Fonts and the spelling dictionary never change under a given name; the
-  // bundle changes with every update, and a tab holding a stale app.js
-  // against a new server is the classic post-upgrade bug. Revalidate it on
-  // each load.
-  const cache = ['.woff2', '.aff', '.dic'].includes(ext) ? 'public, max-age=31536000, immutable' : 'no-cache';
+  // Fonts never change under a given name; the bundle and the checker binary
+  // change with updates, and a tab holding a stale app.js against a new server
+  // is the classic post-upgrade bug. Revalidate those on each load.
+  const cache = ext === '.woff2' ? 'public, max-age=31536000, immutable' : 'no-cache';
   let asset;
   try {
     const stat = fs.statSync(filePath);
@@ -576,10 +579,7 @@ async function handleRequest(req, res) {
       const fontFile = path.basename(url.pathname);
       serveStatic(req, res, path.join(PUBLIC, 'fonts', fontFile));
     }
-    else if (url.pathname.startsWith('/dictionary/')) {
-      const dictFile = path.basename(url.pathname);
-      serveStatic(req, res, path.join(PUBLIC, 'dictionary', dictFile));
-    }
+    else if (url.pathname === '/harper.wasm') serveStatic(req, res, path.join(PUBLIC, 'harper.wasm'));
     else { res.writeHead(404); res.end('Not found'); }
     return;
   }

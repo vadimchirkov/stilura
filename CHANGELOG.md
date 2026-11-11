@@ -4,6 +4,7 @@ Stilura (renamed from Litura) follows [semantic versioning](https://semver.org).
 
 ## Unreleased
 
+- Spelling and grammar are checked offline with [Harper](https://github.com/automattic/harper) instead of the Hunspell dictionary. Marks now also cover agreement errors, repeated words and similar mistakes, each with Harper's explanation on hover and its fixes in the bubble. The checker runs in a web worker; its ~20 MB binary is served once as `/harper.wasm` and revalidated like the bundle.
 - A crash no longer keeps the writer out of their own draft. An unreadable notes file is kept aside and the margin starts empty instead of stopping the server; a session file left by a dead or crashed process is verified against the server it advertises before it is trusted, so a reused process number cannot keep the draft locked; a stale save lock is recognized and released; and one unreadable desktop state entry no longer hides every setting and the open draft. Ctrl-C and a closing window now remove the session claim on the way out.
 - Typing stays responsive in long drafts. Spelling is checked when typing pauses instead of on every keystroke (the marks already on screen follow the edit), and the Latin-script test that guards the English dictionary runs in one scan. Typing 63 characters at 300k characters went from ~0.8 s to ~0.25 s.
 - Static files are compressed and revalidated: the app bundle serves at roughly a third of its size, and a reload answers `304` instead of resending it. Release builds are minified; the development build stays readable.

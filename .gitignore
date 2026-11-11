@@ -8,6 +8,8 @@ npm-debug.log*
 /dist
 # Generated frontend bundle: rebuilt by `npm run build`.
 /public/app.js
+# Copied from harper.js by the build.
+/public/harper.wasm
 /src-tauri/target
 # The Node runtime the desktop build ships: 120 MB, fetched by
 # scripts/fetch-node.mjs and checksummed against the release.

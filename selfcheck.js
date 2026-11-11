@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import nspell from 'nspell';
+import { LocalLinter, createBinaryModuleFromUrl } from 'harper.js';
 import { clampThinkingLevel } from '@earendil-works/pi-ai';
 import { getAgentStatus } from './pi.js';
 import { renderMarkdown } from './markdown.js';
-import { spellingMarkers, noteSpellingAdded } from './spellcheck.js';
+import { lintMarkers, ignoreMarker } from './spellcheck.js';
 import { clampBubble, resolveDrift, unwrapProse, wordDiff } from './editing.js';
 import { chatVisibleText, parseChatResponse } from './chat-edits.js';
 import {
@@ -169,23 +169,26 @@ assert.equal(isLatinScript('Ⅻ Привет мир'), false);
 assert.equal(isLatinScript('hello Привет'), false);
 assert.equal(isLatinScript('hello world Привет'), true);
 
-// Spelling marks: real typos are flagged with exact offsets, clean prose and
-// all-caps acronyms are left alone, and a non-Latin draft is skipped entirely.
+// Spelling and grammar marks: real errors are flagged with exact offsets and
+// fixes, clean prose, acronyms and code spans are left alone, and a non-Latin
+// draft is skipped entirely.
 {
-  const spell = nspell(
-    fs.readFileSync(new URL('./public/dictionary/en.aff', import.meta.url), 'utf8'),
-    fs.readFileSync(new URL('./public/dictionary/en.dic', import.meta.url), 'utf8'),
-  );
-  const marks = spellingMarkers('This sentnce has a typo, but NASA does not.', spell);
-  assert.deepEqual(marks.map(m => m.quote), ['sentnce']);
-  assert.equal(marks[0].from, 5);
-  assert.deepEqual(spellingMarkers('Clean prose with no errors here.', spell), []);
-  assert.deepEqual(spellingMarkers('Пекарня закрылась в марте', spell), []);
-  assert.deepEqual(spellingMarkers('any text', null), []);
-  // Ignore teaches the dictionary; the cached verdict must follow, not linger.
-  spell.add('sentnce');
-  noteSpellingAdded('sentnce');
-  assert.deepEqual(spellingMarkers('This sentnce has a typo.', spell), []);
+  const binary = createBinaryModuleFromUrl(new URL('./node_modules/harper.js/dist/harper_wasm_slim_bg.wasm', import.meta.url).href, 'slim');
+  const linter = new LocalLinter({ binary });
+  // An emoji ahead of the typo is two UTF-16 units: offsets must still match.
+  const text = '😀 This sentnce has a typo, but NASA does not. He go home. Run `npx stilura`.';
+  const marks = await lintMarkers(text, linter);
+  assert.deepEqual(marks.map(m => m.quote), ['sentnce', 'go']);
+  assert.equal(text.slice(marks[0].from, marks[0].to), 'sentnce');
+  assert.equal(marks[0].fixes[0].insert, 'sentence');
+  assert.equal(marks[1].fixes[0].insert, 'goes');
+  assert.deepEqual(await lintMarkers('Clean prose with no errors here.', linter), []);
+  assert.deepEqual(await lintMarkers('Пекарня закрылась в марте', linter), []);
+  assert.deepEqual(await lintMarkers('any text', null), []);
+  // Ignore hides that problem text everywhere for the session.
+  ignoreMarker(marks[0]);
+  assert.deepEqual((await lintMarkers('This sentnce has a typo. So does this sentnce.', linter)).map(m => m.quote), []);
+  await linter.dispose();
 }
 
 // A restated tail is cut; an ordinary continuation is left alone.
