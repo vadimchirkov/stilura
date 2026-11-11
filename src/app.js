@@ -37,6 +37,9 @@ import { openStorage } from './storage.js';
 import { liveDocument } from './live.js';
 import { markdownField } from './editor/markdown.js';
 import { combobox, setOptions, fieldValue } from './combobox.js';
+import { chatEl } from './dom.js';
+import { api } from './api.js';
+import { createNotices, modelError } from './notices.js';
 import { createEditorTheme } from './editor/theme.js';
 import { BRIEF_STEPS, validateBriefQuestions, validateBriefUpdate } from '../brief.js';
 
@@ -141,166 +144,19 @@ let diskHold = false;
 let autosaveHold = false;
 let loadingDocument = true;
 let editVersion = 0;
-// ─── Notices ───
-// One surface for everything the app tells the writer outside the
-// conversation: a failed save, a refused model call, a dismissal that can be
-// undone. One notice at a time, so nothing is said twice — a new one replaces
-// the last. Passing notices fade on their own; a sticky one (a problem) stays
-// until its button or × puts it away, and no passing notice may cover it.
-// `key` names who raised it, so only they clear it (clearNotice).
-// The notice is a view of the conversation island (#edit-feedback lives
-// inside #chat): while one is shown the pill steps aside for it, like an
-// iPhone alert expanding the island. Tapping the notice opens the chat.
-const NOTICE_MS = 8000;
-let noticeTimer = null;
-let noticeKey = '';
-let noticeSticky = false;
-// A notice never covers a focused field — keystrokes must not fall into the
-// void. While the writer types, the notice parks here (one slot: the next
-// notice replaces a parked one, like shown ones do) and flushes on blur.
-let pendingNotice = null;
-function notify(text, { action = null, label = 'Undo', sticky = false, detail = '', key = '', icon = 'info', tone = '' } = {}) {
-  if (tone === 'error') sticky = true;
-  if (!text) {
-    clearTimeout(noticeTimer);
-    editFeedback.hidden = true;
-    noticeLive.textContent = '';
-    chatPanel.classList.remove('has-notice');
-    if (key === '' || (pendingNotice && pendingNotice.key === key)) pendingNotice = null;
-    noticeKey = ''; noticeSticky = false;
-    return;
-  }
-  if (noticeSticky && !sticky && !editFeedback.hidden) return;
-  // A passing notice waits for the field's blur rather than covering typing.
-  // A problem does not: it is usually the answer to what was just sent from
-  // that field, and parked it stayed invisible while the writer waited.
-  if (document.activeElement === chatInput && !sticky) { pendingNotice = { text, key, opts: { action, label, sticky, detail, key, icon, tone } }; return; }
-  pendingNotice = null;
-  showNotice(text, { action, label, sticky, detail, key, icon, tone });
-}
-function showNotice(text, { action = null, label = 'Undo', sticky = false, detail = '', key = '', icon = 'info', tone = '' } = {}) {
-  clearTimeout(noticeTimer);
-  editFeedback.replaceChildren();
-  if (icon) {
-    const badge = chatEl('span', 'ph notice-icon', '');
-    badge.dataset.icon = icon;
-    badge.setAttribute('aria-hidden', 'true');
-    editFeedback.append(badge);
-  }
-  const message = chatEl('span', '', text);
-  message.title = detail || text;
-  editFeedback.append(message);
-  if (action) {
-    const run = chatEl('button', 'edit-feedback-undo', label);
-    run.type = 'button';
-    run.addEventListener('click', () => { notify(''); action(); });
-    editFeedback.append(run);
-  }
-  const close = chatEl('button', 'edit-feedback-close', '×');
-  close.type = 'button';
-  close.setAttribute('aria-label', 'Hide notice');
-  close.addEventListener('click', () => { notify(''); workView.focus(); });
-  editFeedback.append(close);
-  hydrateIcons(editFeedback);
-  if (tone) editFeedback.dataset.tone = tone; else delete editFeedback.dataset.tone;
-  editFeedback.hidden = false;
-  noticeLive.textContent = text;
-  chatPanel.classList.add('has-notice');
-  noticeKey = key;
-  noticeSticky = sticky;
-  // Only plain news times out. An Undo or an error stays until dismissed: a
-  // timer would take the recovery away before a keyboard user reaches it.
-  if (!sticky && !action && tone !== 'error') noticeTimer = setTimeout(() => notify(''), NOTICE_MS);
-}
-// A notice under the pointer is being read or about to be pressed: it must
-// not fade out from under the hand. Leaving restarts the full count.
-editFeedback.addEventListener('mouseenter', () => clearTimeout(noticeTimer));
-editFeedback.addEventListener('mouseleave', () => {
-  if (noticeSticky || editFeedback.hidden || editFeedback.querySelector('.edit-feedback-undo') || editFeedback.dataset.tone === 'error') return;
-  clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => notify(''), NOTICE_MS);
+// ─── Notices ─── (src/notices.js)
+const notices = createNotices({
+  editFeedback, noticeLive, chatPanel, chatInput,
+  focusEditor: () => workView.focus(),
+  openSettings: tab => openSettings(tab),
 });
-// Summoning the composer dismisses a passing notice: the island shows either
-// the input or the notice, never both. A sticky problem stays until its own
-// action or × — it keeps the input covered until then.
-function dismissPassingNotice() {
-  if (!noticeSticky && !editFeedback.hidden) notify('');
-}
-chatInput.addEventListener('blur', event => {
-  if (!pendingNotice) return;
-  // Focus moving within the island (Send, chip clear) is still the composer
-  // at work — the parked notice waits for a real leave.
-  if (event.relatedTarget && chatPanel.contains(event.relatedTarget)) return;
-  const parked = pendingNotice;
-  pendingNotice = null;
-  notify(parked.text, parked.opts);
-});
-function clearNotice(key) { if (noticeKey === key) notify(''); }
+const { notify, notifyProblem, clearNotice, dismissPassingNotice } = notices;
 function setSuggestStatus(text, detail) {
   suggestWorking = text.endsWith('…') ? text : '';
   syncPill();
   if (text && !suggestWorking) notify(text, { detail });
 }
 
-// A provider's failure arrives as a status code and its own JSON, and pasting
-// that into the interface tells the writer nothing they can act on. Keep the
-// line about whose problem it is and what to do; the payload goes to the
-// console and the tooltip, where it is there for a bug report and nowhere else.
-// One short sentence for the cause. What to do about it is the button beside
-// it, not a second clause: "rate-limited, try again shortly" says the same
-// thing twice and reads like an apology.
-const MODEL_ERRORS = {
-  400: 'The model rejected the request.',
-  401: 'The API key was rejected.',
-  402: 'This provider is out of credit.',
-  403: 'This key may not use this model.',
-  404: 'This model is not available.',
-  408: 'The model took too long.',
-  413: 'The draft is too long for this model. Pick a model with a longer context, or select a shorter passage.',
-  429: 'The model is rate-limited.',
-  500: 'The provider hit an error.',
-  502: 'The provider hit an error.',
-  503: 'The provider is unavailable.',
-  529: 'The provider is overloaded.',
-};
-
-function modelError(error) {
-  const detail = error?.message ?? String(error);
-  console.error('[model]', detail);
-  if (/failed to fetch|networkerror|load failed/i.test(detail)) {
-    return { say: 'Stilura stopped answering.', act: 'retry', detail };
-  }
-  const status = Number(/^(?:HTTP |Server error )?([45]\d\d)\b/.exec(detail)?.[1]);
-  // Providers say how long to wait ("try again in 14.16s"); that number is the
-  // one useful thing in a rate-limit payload.
-  const waitMatch = status === 429 ? /try again in (\d+(?:\.\d+)?)\s*(ms|s|m)\b/i.exec(detail) : null;
-  const wait = waitMatch ? Math.max(1, Math.ceil(Number(waitMatch[1]) * { ms: .001, s: 1, m: 60 }[waitMatch[2].toLowerCase()])) : 0;
-  const unusable = /^Expected TEXT:|^Continuation must be|^Word continuation/.test(detail);
-  return {
-    say: wait ? `The model is rate-limited. Try again in ${wait} s.`
-      : unusable ? 'The model\'s answer was unusable.'
-      : MODEL_ERRORS[status] ?? 'The model could not answer.',
-    // Retrying a rejected key, a missing model or an oversized draft only
-    // fails again; each is fixed in settings (the draft by a larger model).
-    act: [401, 402, 403, 404, 413].includes(status) ? 'settings' : 'retry',
-    // Where the fix is: a rejected or unfunded key is under access, a model
-    // the key cannot use or that does not exist is picked under models.
-    tab: 'models',
-    detail,
-  };
-}
-
-// The message is the cause; the button is the answer to it. Every failure the
-// writer can act on takes this shape — a bare retry pill with no sentence
-// beside it is a button for a problem that was never named.
-// A retry that rejects puts the way out back.
-function notifyProblem(problem, retry = null, label = 'Try again', key = '') {
-  const act = problem.act === 'settings' ? { action: () => openSettings(problem.tab), label: 'Open settings' }
-    : problem.act === 'retry' && retry
-      ? { action: () => Promise.resolve().then(retry).catch(() => notifyProblem(problem, retry, label, key)), label }
-      : {};
-  notify(problem.say, { ...act, sticky: true, detail: problem.detail, key, icon: 'alert', tone: 'error' });
-}
 // A failed suggestion is about the model, not the text: report it even when
 // the writer has typed on since. Background retries fire at every pause, so a
 // passing failure is shown once per half minute; one only settings can fix
@@ -528,17 +384,6 @@ function selectProvider(id) {
 }
 const connectedTo = selectProvider;
 
-async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
-  // Read text first: a non-JSON error page (proxy, gateway) must still leave
-  // something to report instead of dying in res.json() with a SyntaxError.
-  const raw = await response.text().catch(() => '');
-  let data = {};
-  try { data = raw ? JSON.parse(raw) : {}; }
-  catch { data = { error: raw.slice(0, 200) || `HTTP ${response.status}` }; }
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-  return data;
-}
 
 async function refreshAgent() {
   agentInfo = await api('/api/agent/status');
@@ -1696,12 +1541,6 @@ const chatRequests = new Set();
 const chatEditCards = new Map();
 let changingChatEdit = null;
 
-function chatEl(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
 
 // Follow the stream only when the reader is already at the bottom. Yanking
 // them down mid-sentence while they scroll back is the classic chat sin.
@@ -3644,7 +3483,7 @@ const workView = new EditorView({
       EditorView.updateListener.of(suggestionUpdate),
       // The island's key hint lives exactly as long as the suggestion it names.
       EditorView.updateListener.of(update => {
-        if (noticeKey === 'passage-hint' && update.state.field(generationField)?.phase !== 'review') notify('', { key: 'passage-hint' });
+        if (notices.state().key === 'passage-hint' && update.state.field(generationField)?.phase !== 'review') notify('', { key: 'passage-hint' });
       }),
 
       // Save on every edit.

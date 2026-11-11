@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { build } from 'esbuild';
 import { appSection } from './app-source.mjs';
 
 const require = createRequire(import.meta.url);
@@ -46,18 +47,19 @@ try {
       } else assert.equal(state.panel, 'none');
     }
   }
-  await page.addScriptTag({ content: `
+  const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
+    import { createNotices, modelError } from './src/notices.js';
     const chatPanel = document.getElementById('chat');
     const chatInput = document.getElementById('chat-input');
     const editFeedback = document.getElementById('edit-feedback');
     const noticeLive = document.getElementById('notice-live');
-    const chatEl = (tag, className, text) => Object.assign(document.createElement(tag), { className, textContent: text });
-    const hydrateIcons = () => {};
     const syncPill = () => {};
-    let suggestWorking = '', openedSettings = '';
-    const openSettings = tab => { openedSettings = tab; };
-    const workView = { focus() {} };
-    ${appSection('const NOTICE_MS =', 'let tabId;')}
+    let suggestWorking = '';
+    window.openedSettings = '';
+    const notices = createNotices({ editFeedback, noticeLive, chatPanel, chatInput,
+      focusEditor() {}, openSettings: tab => { window.openedSettings = tab; } });
+    const { notify, notifyProblem } = notices;
+    ${appSection('function setSuggestStatus(', 'let tabId;')}
     let generationJob = null, documentKey = 'test', loadingDocument = false, savePaused = false;
     const generationField = {}, jobs = new Set();
     const startJob = () => { const job = new AbortController(); jobs.add(job); return job; };
@@ -77,14 +79,16 @@ try {
       const view = { state: { readOnly: false, doc: { toString: () => '/Write.', lineAt: () => ({ from: 0 }) }, field: () => target },
         dispatch({ effects }) { for (const effect of effects) if ('generation' in effect) target = effect.generation; } };
       await generateFromLine(view, { from: 0, to: 7, text: '/Write.' }, 'Write.');
-      return { text: editFeedback.textContent, tone: editFeedback.dataset.tone, sticky: noticeSticky, timer: noticeTimer };
+      return { text: editFeedback.textContent, tone: editFeedback.dataset.tone, sticky: notices.state().sticky, timer: notices.state().timer };
     };
     window.checkSuggestError = () => {
       notify('Earlier instruction', { sticky: true });
       reportSuggestFailure(modelError(new Error(error402)), false);
-      return { text: editFeedback.textContent, tone: editFeedback.dataset.tone, sticky: noticeSticky };
+      return { text: editFeedback.textContent, tone: editFeedback.dataset.tone, sticky: notices.state().sticky };
     };
-  ` });
+    Object.assign(window, { notify, notifyProblem, modelError, editFeedback, noticeState: notices.state });
+  ` }, bundle: true, write: false, format: 'iife' });
+  await page.addScriptTag({ content: bundle.outputFiles[0].text });
   const writeError = await page.evaluate(() => window.checkWriteError());
   assert.match(writeError.text, /out of credit/);
   assert.match(writeError.text, /Open settings/);
@@ -107,7 +111,7 @@ try {
   ]) {
     const state = await page.evaluate(error => {
       notifyProblem(modelError(new Error(error)), () => {});
-      return { text: editFeedback.textContent, sticky: noticeSticky, visible: !editFeedback.hidden };
+      return { text: editFeedback.textContent, sticky: noticeState().sticky, visible: !editFeedback.hidden };
     }, error);
     assert(state.text.includes(message));
     assert(state.sticky && state.visible);

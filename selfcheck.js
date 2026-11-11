@@ -85,6 +85,18 @@ import {
   assert.deepEqual(asked, ['gpt-6-luna', 'gpt-5.6-terra']);
 }
 
+// Inside main() `localStorage` is the store openStorage() returned, which
+// shadows the browser's. A module split out of app.js that reached for the
+// global would silently read and write a different store: modules get the
+// store passed in instead.
+for (const dir of ['src', 'src/editor']) {
+  for (const name of fs.readdirSync(new URL(`./${dir}/`, import.meta.url))) {
+    if (!name.endsWith('.js') || (dir === 'src' && ['app.js', 'storage.js'].includes(name))) continue;
+    const code = fs.readFileSync(new URL(`./${dir}/${name}`, import.meta.url), 'utf8');
+    assert(!/\blocalStorage\b/.test(code), `${dir}/${name} must take storage as an argument, not use localStorage`);
+  }
+}
+
 // ── Rewrite scope ──
 // The marked span is what the model must replace; an unmarked draft is what
 // made it rewrite the whole thing.
