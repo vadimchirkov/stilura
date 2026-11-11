@@ -132,5 +132,5 @@ const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), '
 assert(!html.includes('id="suggest-model"'));
 assert(!source.includes("['ask', 'Ask']"));
 
-assert(!source.includes("bubbleButton('Note'"));
+assert(!fs.readFileSync(new URL('../src/features/bubble.js', import.meta.url), 'utf8').includes("bubbleButton('Note'"));
 assert(!source.includes("      noteField,"));
