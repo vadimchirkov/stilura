@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import vm from 'node:vm';
 import * as generate from '../src/features/generate.js';
+import * as passage from '../src/features/passage.js';
 
 // Some tests run a section of src/app.js cut out by text markers. A marker
 // that moved or was renamed must fail loudly here, not hand the test an empty
@@ -27,12 +27,28 @@ export function generateIn(context) {
     documentKey: () => context.documentKey,
     loading: () => context.loadingDocument,
     paused: () => context.loadingDocument || context.savePaused,
-    passageFx: () => vm.runInContext('typeof setPassageFx === "undefined" ? null : setPassageFx', context),
+    passageFx: () => context.setPassageFx ?? null,
     fetch: late('fetch'),
     ...Object.fromEntries(['cancelSuggestion', 'closePassage', 'combinedContext', 'currentAgent', 'ensureAgent',
       'startJob', 'finishJob', 'notify', 'notifyProblem', 'requestPassage', 'saveSnapshot', 'sseChunks'].map(name => [name, late(name)])),
   });
   const { setGenerationFx, generationField, slashRequest, requestField } = generate;
   Object.assign(context, feature, { setGenerationFx, generationField, slashRequest, requestField });
+  return feature;
+}
+
+// Same for the passage actions; build generation first, they share its field.
+export function passageIn(context) {
+  const late = name => (...args) => context[name](...args);
+  const feature = passage.createPassage({
+    jobs: context.jobs,
+    documentKey: () => context.documentKey,
+    loading: () => context.loadingDocument,
+    paused: () => context.loadingDocument || context.savePaused,
+    fetch: late('fetch'),
+    ...Object.fromEntries(['cancelSuggestion', 'combinedContext', 'currentAgent', 'ensureAgent', 'startJob', 'finishJob',
+      'notify', 'notifyProblem'].map(name => [name, late(name)])),
+  });
+  Object.assign(context, feature, { setPassageFx: passage.setPassageFx });
   return feature;
 }

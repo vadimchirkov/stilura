@@ -1,5 +1,4 @@
-import { distinctVariants, rewriteInstruction } from '../extension/writing-rules.js';
-import { EDITOR_UI_CSS, createPassageInput } from '../extension/editor-ui.js';
+import { EDITOR_UI_CSS } from '../extension/editor-ui.js';
 // src/app.js — Stilura frontend (CodeMirror 6)
 
 import {
@@ -8,7 +7,6 @@ import {
   drawSelection,
   Decoration,
   WidgetType,
-  showTooltip,
 } from '@codemirror/view';
 import {
   EditorState,
@@ -43,6 +41,7 @@ import { api } from './api.js';
 import { createUpdateCheck } from './update.js';
 import { createSuggest } from './features/suggest.js';
 import { setGenerationFx, generationField, slashRequest, requestField, createGenerate } from './features/generate.js';
+import { setPassageFx, createPassage } from './features/passage.js';
 import { createNotices, modelError } from './notices.js';
 import { createEditorTheme } from './editor/theme.js';
 import { BRIEF_STEPS, validateBriefQuestions, validateBriefUpdate } from '../brief.js';
@@ -848,137 +847,22 @@ function editorSetReadonly(view, on) {
   view.dom.classList.toggle('streaming', on);
 }
 
-// ─── Local passage actions ────────────────────────────────────────────────────
-
-let passageJob = null;
-const setPassageFx = StateEffect.define();
-const passageField = StateField.define({
-  create: () => null,
-  update(value, tr) {
-    if (tr.state.readOnly) return null;
-    if (value && tr.docChanged) {
-      value = { ...value, state: 'pending' };
-      mapChatEdit(value, tr.changes);
-      if (value.state === 'stale' || tr.newDoc.sliceString(value.from, value.to) !== value.quote) value = null;
-    }
-    for (const effect of tr.effects) if (effect.is(setPassageFx)) value = effect.value;
-    return value;
-  },
-  provide: field => [
-    showTooltip.computeN([field, generationField], state => {
-      const value = state.field(field);
-      return value && !value.busy && state.field(generationField)?.source !== 'passage' ? [{ pos: value.from, end: value.to, above: false, create: passageTooltip }] : [];
-    }),
-  ],
+// ─── Local passage actions ─── (src/features/passage.js)
+const passage = createPassage({
+  jobs,
+  documentKey: () => documentKey,
+  loading: () => loadingDocument,
+  paused: () => loadingDocument || savePaused,
+  cancelSuggestion: () => cancelSuggestion(),
+  combinedContext: () => combinedContext(),
+  currentAgent: () => currentAgent(),
+  ensureAgent: () => ensureAgent(),
+  startJob: options => startJob(options),
+  finishJob: job => finishJob(job),
+  notify: (...args) => notify(...args),
+  notifyProblem: (...args) => notifyProblem(...args),
 });
-
-function openPassage(view, range) {
-  if (!range || range.to <= range.from || loadingDocument || view.state.readOnly) return false;
-  if (view.state.field(generationField)?.source !== 'passage' && view.state.field(generationField)) {
-    notify('Accept or dismiss the current suggestion first.'); return false;
-  }
-  closePassage(view);
-  cancelSuggestion(); ghostClear(view);
-  view.dispatch({ effects: setPassageFx.of({ from: range.from, to: range.to,
-    quote: view.state.doc.sliceString(range.from, range.to), key: documentKey,
-    instruction: '', answer: '', busy: false }), selection: { anchor: range.to } });
-  return true;
-}
-
-function closePassage(view) {
-  passageJob?.abort();
-  const effects = [setPassageFx.of(null)];
-  if (view.state.field(generationField)?.source === 'passage') effects.push(setGenerationFx.of(null));
-  view.dispatch({ effects });
-}
-
-function passageTooltip(view) {
-  const { dom, input, fit } = createPassageInput({
-    onSubmit: () => { void requestPassage(view); },
-    onChange: instruction => {
-      const value = view.state.field(passageField);
-      if (value && !value.busy) view.dispatch({ effects: setPassageFx.of({ ...value, instruction, answer: '' }) });
-    },
-    onClose: () => {
-      if (passageJob) passageJob.abort(); else closePassage(view);
-      view.focus();
-    },
-  });
-  const render = () => {
-    const value = view.state.field(passageField);
-    if (!value) return;
-    const text = !value.busy && value.answer || value.instruction;
-    if (input.value !== text) { input.value = text; fit(); }
-    input.readOnly = value.busy;
-    input.setAttribute('aria-busy', String(value.busy));
-  };
-  // A press anywhere else puts the field away. Not blur: a replacement
-  // preview hands focus to the editor on purpose, and its own buttons
-  // (inside .cm-generation) must still work.
-  const outside = event => {
-    if (!dom.contains(event.target) && !event.target.closest?.('.cm-generation')) closePassage(view);
-  };
-  render();
-  return {
-    dom, update: render,
-    mount: () => { document.addEventListener('pointerdown', outside, true); queueMicrotask(() => { fit(); input.focus(); }); },
-    destroy: () => document.removeEventListener('pointerdown', outside, true),
-  };
-}
-
-async function requestPassage(view, previous = null) {
-  let target = view.state.field(passageField);
-  if (!target || loadingDocument || savePaused || view.state.readOnly || target.key !== documentKey) return;
-  if (!target.instruction.trim()) return;
-  if ([...jobs].some(job => !job.background)) { notify('Wait for the current request or stop it first.'); return; }
-  const job = startJob(); passageJob = job;
-  view.dispatch({ effects: setPassageFx.of({ ...target, busy: true, job, answer: '' }) });
-  view.focus();
-  const current = () => !job.signal.aborted && !loadingDocument && !savePaused && !view.state.readOnly
-    && view.state.field(passageField)?.job === job && documentKey === target.key;
-  try {
-    if (!await ensureAgent() || !current()) return;
-    target = view.state.field(passageField);
-    const instruction = rewriteInstruction(target.instruction, previous);
-    const response = await fetch('/ask', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: job.signal,
-      body: JSON.stringify({ document: view.state.doc.toString(), selected: target.quote, from: target.from,
-        instruction, agent: currentAgent(), context: combinedContext() || undefined }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
-    if (!current()) return;
-    const live = view.state.field(passageField);
-    if (!data.variants?.length) {
-      if (typeof data.answer !== 'string' || !data.answer.trim()) throw new Error('The model returned no answer.');
-      view.dispatch({ effects: setPassageFx.of({ ...live, answer: data.answer }) });
-      return;
-    }
-    const variants = distinctVariants(data.variants, target.quote, previous);
-    if (view.state.doc.sliceString(live.from, live.to) !== live.quote) { notify('The passage changed while the model was working.'); return; }
-    // A suggestion in place of the passage: Tab accepts, R regenerates, Escape dismisses.
-    view.dispatch({ effects: [setGenerationFx.of({ from: live.from, to: live.to, quote: live.quote,
-      text: variants[0], variants, index: 0, source: 'passage', instruction: target.instruction,
-      key: target.key, inline: true, phase: 'review', job }),
-      setPassageFx.of({ ...live, answer: data.answer || '' }),
-      EditorView.announce.of('Suggestion ready. Click or type to edit. Tab accepts, Escape dismisses, R regenerates.')],
-      selection: { anchor: live.to } });
-    view.focus();
-    notify('Tab accepts · R regenerates · Esc dismisses', { sticky: true, key: 'passage-hint' });
-  } catch (error) {
-    if (current()) {
-      if (previous && view.state.field(generationField)) {
-        view.dispatch({ effects: setPassageFx.of({ ...view.state.field(passageField), answer: 'Could not regenerate — the previous suggestion is kept.' }) });
-      }
-      notifyProblem(modelError(error), () => requestPassage(view, previous), 'Try again', 'passage-error');
-    }
-  } finally {
-    const live = view.state.field(passageField);
-    if (live?.job === job) view.dispatch({ effects: setPassageFx.of({ ...live, busy: false }) });
-    if (passageJob === job) passageJob = null;
-    finishJob(job);
-  }
-}
+const { passageField, openPassage, closePassage, requestPassage } = passage;
 
 // ─── Chat ──────────────────────────────────────────────────────────────────────
 //
@@ -2853,7 +2737,7 @@ const workView = new EditorView({
           key: 'Escape',
           run(view) {
             if (generate.job()) { generate.job().abort(); return true; }
-            if (passageJob) { passageJob.abort(); return true; }
+            if (passage.job()) { passage.job().abort(); return true; }
             if (view.state.field(passageField)) { closePassage(view); return true; }
             const ghost = view.state.field(ghostField);
             const pending = suggestPending();
@@ -2962,7 +2846,7 @@ const workView = new EditorView({
       }),
 
       EditorView.updateListener.of(update => {
-        if (passageJob && (!update.state.field(passageField) || update.state.readOnly || loadingDocument || savePaused)) passageJob.abort();
+        if (passage.job() && (!update.state.field(passageField) || update.state.readOnly || loadingDocument || savePaused)) passage.job().abort();
         if (generate.job() && (!update.state.field(generationField) || update.state.readOnly || loadingDocument || savePaused)) generate.job().abort();
         if (update.selectionSet && !update.docChanged) for (const ui of chatEditCards.values()) if (!ui.retarget.hidden) syncRetarget(ui);
         if (update.docChanged) {

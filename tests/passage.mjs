@@ -7,10 +7,9 @@ import { EditorState, StateField, StateEffect } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType, showTooltip } from '@codemirror/view';
 import { history, undo, isolateHistory } from '@codemirror/commands';
 import { mapChatEdit } from '../chat-edits.js';
-import { appSection, appSource, generateIn } from './app-source.mjs';
+import { appSection, appSource, generateIn, passageIn } from './app-source.mjs';
 
 const source = appSource;
-const passage = appSection('let passageJob = null;', '// ─── Chat ─');
 const draft = 'Opening. The quiet garden waited. Ending. The quiet garden waited.';
 function setup({ beforeReply = () => {}, result } = {}) {
   const jobs = new Set(), requests = [], notices = [], snapshots = [];
@@ -32,7 +31,7 @@ function setup({ beforeReply = () => {}, result } = {}) {
     },
   });
   generateIn(context);
-  vm.runInContext(passage, context);
+  passageIn(context);
   const field = vm.runInContext('passageField', context), gen = vm.runInContext('generationField', context);
   const effect = vm.runInContext('setPassageFx', context);
   const from = draft.indexOf('quiet'), to = from + 5;
