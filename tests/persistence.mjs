@@ -104,13 +104,13 @@ for (const failure of ['throw', 'paused', 'conflict', 'unconfirmed', 'notes', 'b
       if (!release) await new Promise(resolve => { release = resolve; });
       context.diskText = 'latest';
     },
-    saveChat() {}, saveBrief() {},
-    saveNotes() { if (failure === 'notes') throw new Error('Notes unavailable'); },
     saveSnapshot() { events.push('snapshot'); },
     localStorage: { async flush() { events.push('backup'); if (failure === 'backup') throw new Error('Backup unavailable'); } },
     async api() { events.push('open'); throw new Error('Stop fixture after observing open'); },
     notify: (text, options) => notices.push({ text, ...options }),
   });
+  // The notes hook fails like the real one when its storage is unavailable.
+  context.on({ save() { if (failure === 'notes') throw new Error('Notes unavailable'); } });
   vm.runInContext(section('async function switchDocument(', 'const toggleSidebar'), context);
   const switching = context.switchDocument('B.md');
   assert(!events.includes('open'), 'Opening must await the save');
@@ -142,7 +142,7 @@ for (const mode of ['disk', 'cached', 'fast-forward', 'conflict']) {
     lastDiskBaseline: () => ({ text: mode === 'fast-forward' ? cached : 'Older disk text' }),
     noteDiskBaseline() {},
     openDocumentText: text => { context.workView.state = EditorState.create({ doc: text }); },
-    restoreChat() {}, restoreNotes() {}, restoreBrief() {}, renderFileList() {}, clearNotice() {},
+    renderFileList() {}, clearNotice() {},
     adoptDiskText: draft => { effects.push('adopted'); context.openDocumentText(draft.text); },
     showDriftBanner() { context.diskHold = true; effects.push('conflict'); },
     liveSync: { connect() { effects.push('connected'); } },

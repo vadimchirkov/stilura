@@ -1051,6 +1051,20 @@ function changeChatEdit(edit, undo = false, automatic = false) {
   }
 }
 
+// The chat belongs to the open document: kept with it, cleared when it goes.
+docState.on({
+  save: saveChat,
+  restore: restoreChat,
+  reset({ forget }) {
+    chatEditCards.clear();
+    clearPlainPreview();
+    chatHistory = []; chatStream.replaceChildren();
+    if (forget) docStorage.removeItem('wa-chat');
+    setChatOpen(false);   // the stream was just emptied — don't leave × over nothing
+    maybeCollapseIsland();
+  },
+});
+
 // ── Rail ──
 //
 //  A remark about a place in the text stands next to that place. Cards are
@@ -1679,6 +1693,16 @@ function addNote({ para, quote, off = 0, text = '', kind, edit = true }) {
   return note;
 }
 
+// Notes are the open document's: kept with it, dropped when it goes.
+docState.on({
+  save: saveNotes,
+  restore: restoreNotes,
+  reset({ forget }) {
+    discardNoteCards();
+    if (forget) docStorage.removeItem('wa-notes');
+  },
+});
+
 // ── Paragraph "+" ────────────────────────────────────────────────────────────
 //  Hovering the empty margin beside a paragraph shows one faint "+", Notion-
 //  style: the paragraph is the commonest note target, and selecting it first
@@ -2057,6 +2081,17 @@ function focusNote(id) {
 
 // Keep the way back visible even when the conversation is put away.
 const notifyUndo = (message, onUndo) => notify(message, { action: onUndo, key: 'undo', icon: 'check', tone: 'ok' });
+
+// The brief is the open document's: kept with it, dropped when it goes.
+docState.on({
+  save: saveBrief,
+  restore: restoreBrief,
+  reset({ forget }) {
+    positionBrief = null;
+    if (briefSession) { briefSession.controller?.abort(); briefSession.card?.remove(); briefSession = null; }
+    if (forget) docStorage.removeItem('wa-brief');
+  },
+});
 
 // ── Mark bubble ── (src/features/bubble.js)
 const markBubble = document.getElementById('mark-bubble');
@@ -2758,21 +2793,13 @@ function dialog(title) {
 function loadFromDisk(text) {
   docState.loadingDocument = true;
   docState.autosaveHold = false;   // the document is replaced — no delete to guard
-  chatEditCards.clear();
   clearNotice('undo');
   for (const job of jobs) job.abort();
   cancelSuggestion();
   saveSnapshot('Before replacing document');
   workView.dispatch({ changes: { from: 0, to: workView.state.doc.length, insert: text } });
-  discardNoteCards();
-  docStorage.removeItem('wa-notes');
-  docStorage.removeItem('wa-brief');
-  positionBrief = null;
-  if (briefSession) { briefSession.controller?.abort(); briefSession.card?.remove(); briefSession = null; }
-  chatHistory = []; chatStream.replaceChildren();
-  docStorage.removeItem('wa-chat');
-  setChatOpen(false);   // the stream was just emptied — don't leave × over nothing
-  maybeCollapseIsland();
+  // Chat, notes and brief belonged to the replaced text: drop them and their stored copies.
+  docState.emit('reset', { forget: true });
   docState.loadingDocument = false;
 }
 // Replacing the draft asks nothing: the old text goes to History, and the
@@ -2953,7 +2980,8 @@ function restoreDocument(current) {
   openDocumentText(opened.text);
   docState.loadingDocument = false;
   docState.savePaused = false;
-  restoreChat(); restoreNotes(); restoreBrief(); renderFileList();
+  docState.emit('restore');
+  renderFileList();
   if (cached !== null) {
     const verdict = resolveDrift(workView.state.doc.toString(), current.text, driftBase?.text);
     if (verdict === 'fast-forward') adoptDiskText(current);
@@ -3204,7 +3232,7 @@ async function switchDocument(name) {
     if (!docState.autosaveHold) await flushSave();
     if (!docState.savePaused && !docState.diskHold && !docState.autosaveHold) await flushSave();
     clearTimeout(docState.diskTimer);
-    saveChat(); saveNotes(); saveBrief();
+    docState.emit('save');
     if (liveSync?.active) await liveSync.flush();
     if (docState.savePaused || docState.diskHold || (!docState.autosaveHold && workView.state.doc.toString() !== docState.diskText)) throw new Error('The draft has not been saved.');
     saveSnapshot('Before switching document');
@@ -3227,17 +3255,9 @@ async function switchDocument(name) {
   cancelSuggestion();
   // Per-document UI bound to the old text goes; the old file's own state was
   // stored under its key above and is restored when it is opened again.
-  chatEditCards.clear();
   clearNotice('undo');
   clearNotice('disk');
-  discardNoteCards();
-  positionBrief = null;
-  briefSession?.controller?.abort();
-  briefSession = null;
-  clearPlainPreview();
-  chatHistory = []; chatStream.replaceChildren();
-  setChatOpen(false);   // the stream was just emptied — don't leave × over nothing
-  maybeCollapseIsland();
+  docState.emit('reset', { forget: false });
   hideDriftBanner(); docState.diskHold = false;
   // Retarget storage and the disk baseline onto the new file first: every
   // restore below reads under the new key.

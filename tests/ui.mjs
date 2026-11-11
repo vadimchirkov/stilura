@@ -178,7 +178,7 @@ const section = appSection;
         }
       }
     };
-    vm.runInContext(section('function renderChatAnswer(', '// ── Rail'), context);
+    vm.runInContext(section('function renderChatAnswer(', '// The chat belongs to the open document'), context);
     vm.runInContext(section('function restoreChat()', 'function renderChatAnswer('), context);
     vm.runInContext(section('async function streamReply(', 'async function* sseChunks('), context);
     return { context, reply: node('div'), composer, snapshots };

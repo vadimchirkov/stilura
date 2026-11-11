@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import * as generate from '../src/features/generate.js';
 import * as passage from '../src/features/passage.js';
+import { createDocumentState } from '../src/document-state.js';
 
 // Some tests run a section of src/app.js cut out by text markers. A marker
 // that moved or was renamed must fail loudly here, not hand the test an empty
@@ -56,6 +57,7 @@ export function passageIn(context) {
 // ones the app code reads and writes.
 export function docContext(globals) {
   const context = vm.createContext(globals);
-  context.docState = context;
+  const { on, emit } = createDocumentState();
+  Object.assign(context, { on, emit, docState: context });
   return context;
 }
