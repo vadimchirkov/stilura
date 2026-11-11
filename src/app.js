@@ -26,7 +26,7 @@ import {
   isolateHistory,
 } from '@codemirror/commands';
 import { renderMarkdown } from '../markdown.js';
-import { clampBubble, replacementTarget, newerVersion, resolveDrift, unwrapProse, wordDiff } from '../editing.js';
+import { clampBubble, replacementTarget, resolveDrift, unwrapProse, wordDiff } from '../editing.js';
 import { paragraphRanges, resolveNoteRange, mapNoteAnchors } from '../notes.js';
 import { reversible } from '../work.js';
 import { EDITS_OPEN, chatVisibleText, locateChatEdits, mapChatEdit, chatEditMatches } from '../chat-edits.js';
@@ -41,6 +41,7 @@ import { spellMarkerField, createSpelling } from './editor/spelling.js';
 import { combobox, setOptions, fieldValue } from './combobox.js';
 import { chatEl } from './dom.js';
 import { api } from './api.js';
+import { createUpdateCheck } from './update.js';
 import { createNotices, modelError } from './notices.js';
 import { createEditorTheme } from './editor/theme.js';
 import { BRIEF_STEPS, validateBriefQuestions, validateBriefUpdate } from '../brief.js';
@@ -793,70 +794,8 @@ document.addEventListener('mouseup', event => {
   deferBubble(() => showSelectionBubble(clientX, clientY), 250);
 });
 document.addEventListener('copy', () => { if (bubbleMode === 'selection') hideMarkBubble(); });
-// ─── Update check ──────────────────────────────────────────────────────────
-// Off unless the writer turns it on. Every other request Stilura sends is one
-// they started, and a background call to npm on every launch would quietly
-// make that untrue. Once a day is generous for a package that `npx` already
-// updates on its own — the badge is for the globally installed case.
-const UPDATE_INTERVAL = 24 * 60 * 60 * 1000;
-let updateCheckOn = localStorage.getItem('wa-updatecheck') !== 'off';
-updateCheckEl.checked = updateCheckOn;
-
-function renderUpdate({ current, latest, error, managed }) {
-  // The desktop shell checks, verifies a signature, and installs. Offering an
-  // npm command next to that would name a second, wrong way to update.
-  if (managed) {
-    updateSection.hidden = true;
-    updateBadge.hidden = true;
-    return;
-  }
-  const stale = newerVersion(latest, current);
-  updateBadge.hidden = !stale;
-  if (stale) {
-    updateBadge.textContent = `${latest} available`;
-    updateBadge.title = 'Copy npx stilura to update';
-  }
-  updateStatus.textContent =
-    error  ? `Running ${current} — npm could not be reached.` :
-    stale  ? `Running ${current}; npm publishes ${latest}.` :
-    latest ? `Running ${current} — the published version.` :
-             `Running ${current}.`;
-}
-
-updateBadge.addEventListener('click', async () => {
-  if (updateBadge.hidden) return;
-  const command = 'npx stilura';
-  try {
-    await navigator.clipboard.writeText(command);
-    updateBadge.textContent = `Copied: ${command}`;
-  } catch {
-    updateBadge.textContent = `Run: ${command}`;
-  }
-  updateBadge.title = command;
-});
-
-async function refreshUpdate({ force = false } = {}) {
-  let cached = null;
-  try { cached = JSON.parse(localStorage.getItem('wa-update') || 'null'); } catch {}
-  const check = updateCheckOn && (force || !(cached && Date.now() - cached.at < UPDATE_INTERVAL));
-  try {
-    const info = await api(`/api/version${check ? '?check=1' : ''}`);
-    if (info.latest) localStorage.setItem('wa-update', JSON.stringify({ latest: info.latest, at: Date.now() }));
-    // A cached answer still counts while it is fresh, but only while the check
-    // is on: switching it off hides the badge instead of leaving a stale one.
-    renderUpdate({ ...info, latest: info.latest ?? (updateCheckOn ? cached?.latest : undefined) });
-  } catch {
-    // The server that just served this page is not worth an error card.
-  }
-}
-
-updateCheckEl.addEventListener('change', () => {
-  updateCheckOn = updateCheckEl.checked;
-  localStorage.setItem('wa-updatecheck', updateCheckOn ? 'on' : 'off');
-  refreshUpdate({ force: updateCheckOn });
-});
-
-refreshUpdate();
+// ─── Update check ─── (src/update.js)
+const { refreshUpdate } = createUpdateCheck({ storage: localStorage, checkbox: updateCheckEl, badge: updateBadge, status: updateStatus, section: updateSection });
 
 // ─── Suggestion system ─────────────────────────────────────────────────────────
 
