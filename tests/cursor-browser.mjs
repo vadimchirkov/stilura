@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { build } from 'esbuild';
 import { loadPuppeteer } from './browser-driver.mjs';
+import { appSection } from './app-source.mjs';
 
 const puppeteer = loadPuppeteer();
 
 // Exercise the actual widgets and theme with CodeMirror's cursor measurement.
-const source = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-const widget = source.slice(source.indexOf('class GenerationWidget'), source.indexOf('const generationField'));
-const theme = source.slice(source.indexOf('const editorTheme ='), source.indexOf('// ─── Editor setup'));
+const widget = appSection('class GenerationWidget', 'const generationField');
+const theme = appSection('const editorTheme =', '// ─── Editor setup');
 const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
   import { createGenerationLoader } from './extension/editor-ui.js';
   import { EditorState } from '@codemirror/state';

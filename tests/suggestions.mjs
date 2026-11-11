@@ -1,11 +1,11 @@
 import * as writingRules from '../extension/writing-rules.js';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import vm from 'node:vm';
 import { EditorState, StateField, StateEffect } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
 import { cursorWindow, parseSuggestion, suggestionPrompts, requestSuggestion } from '../suggestions.js';
 import { insertionText, trimOverlap } from '../review.js';
+import { appSection } from './app-source.mjs';
 
 const raw = (text, continuesWord = false) => text ? `${continuesWord ? 'WORD' : 'TEXT'}: ${text}` : 'NONE';
 for (const [before, text, word, after] of [
@@ -109,7 +109,6 @@ assert.match(briefPrompts.systemPrompt, /not facts to insert/);
 
 // Exercise production editor state, acceptance and scheduling with a deferred
 // provider boundary. Responses deliberately ignore abort to test stale guards.
-const source = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
 function harness(text = 'A sufficiently long draft') {
   const timers = new Map(), requests = [], statuses = [], jobs = new Set();
   let timerId = 0, saves = 0;
@@ -134,8 +133,8 @@ function harness(text = 'A sufficiently long draft') {
     },
     modelError: error => ({ say: error.message }), saidInStream: () => false,
   });
-  vm.runInContext(source.slice(source.indexOf('class GhostWidget'), source.indexOf('// ─── Spelling marks')), context);
-  vm.runInContext(source.slice(source.indexOf('let suggestTimer ='), source.indexOf('// ─── Read-only compartment')), context);
+  vm.runInContext(appSection('class GhostWidget', '// ─── Spelling marks'), context);
+  vm.runInContext(appSection('let suggestTimer =', '// ─── Read-only compartment'), context);
   const ghostField = vm.runInContext('ghostField', context);
   view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [ghostField] });
   view.dispatch = spec => {
@@ -267,8 +266,7 @@ for (const [text, cursor, eligible] of [
   const h = harness();
   h.context.positionBrief = { reader: 'beginners' };
   h.context.docStorage = { setItem() {} };
-  const from = source.indexOf('function saveBrief()'), to = source.indexOf('function restoreBrief()', from);
-  vm.runInContext(source.slice(from, to), h.context);
+  vm.runInContext(appSection('function saveBrief()', 'function restoreBrief()'), h.context);
   h.context.ghostShow(h.view, 'old wording');
   h.context.saveBrief();
   assert.equal(h.ghost(), null, 'Saving a brief clears already visible ghost text');

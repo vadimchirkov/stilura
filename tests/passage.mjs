@@ -7,10 +7,11 @@ import { EditorState, StateField, StateEffect } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType, showTooltip } from '@codemirror/view';
 import { history, undo, isolateHistory } from '@codemirror/commands';
 import { mapChatEdit } from '../chat-edits.js';
+import { appSection, appSource } from './app-source.mjs';
 
-const source = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-const generation = source.slice(source.indexOf('let generationJob = null;'), source.indexOf('// ─── Read-only compartment'));
-const passage = source.slice(source.indexOf('let passageJob = null;'), source.indexOf('// ─── Chat ─'));
+const source = appSource;
+const generation = appSection('let generationJob = null;', '// ─── Read-only compartment');
+const passage = appSection('let passageJob = null;', '// ─── Chat ─');
 const draft = 'Opening. The quiet garden waited. Ending. The quiet garden waited.';
 function setup({ beforeReply = () => {}, result } = {}) {
   const jobs = new Set(), requests = [], notices = [], snapshots = [];
@@ -126,7 +127,7 @@ assert.equal(noModel.jobs.size, 0);
 console.log('Passage checks passed: local questions, synonyms, mapped replacements, regeneration, stale guards and Undo.');
 
 const modelScope = vm.createContext({ currentAgent: () => ({ provider: 'shared', model: 'one' }) });
-vm.runInContext(source.slice(source.indexOf('function activeSuggestAgent()'), source.indexOf('// ── Combobox')), modelScope);
+vm.runInContext(appSection('function activeSuggestAgent()', '// ── Combobox'), modelScope);
 assert.equal(modelScope.activeSuggestAgent().model, 'one');
 const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 assert(!html.includes('id="suggest-model"'));

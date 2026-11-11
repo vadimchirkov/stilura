@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { appSection } from './app-source.mjs';
 
 const require = createRequire(import.meta.url);
 const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer');
@@ -45,7 +46,6 @@ try {
       } else assert.equal(state.panel, 'none');
     }
   }
-  const source = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
   await page.addScriptTag({ content: `
     const chatPanel = document.getElementById('chat');
     const chatInput = document.getElementById('chat-input');
@@ -57,7 +57,7 @@ try {
     let suggestWorking = '', openedSettings = '';
     const openSettings = tab => { openedSettings = tab; };
     const workView = { focus() {} };
-    ${source.slice(source.indexOf('const NOTICE_MS ='), source.indexOf('let tabId;'))}
+    ${appSection('const NOTICE_MS =', 'let tabId;')}
     let generationJob = null, documentKey = 'test', loadingDocument = false, savePaused = false;
     const generationField = {}, jobs = new Set();
     const startJob = () => { const job = new AbortController(); jobs.add(job); return job; };
@@ -70,7 +70,7 @@ try {
     const error402 = '402 {"type":"error","error":{"type":"api_error","message":"Upstream request failed: Insufficient account funds"}}';
     const fetch = async () => ({ ok: true });
     async function* sseChunks() { yield { error: error402 }; }
-    ${source.slice(source.indexOf('async function generateFromLine('), source.indexOf('// ─── Read-only compartment'))}
+    ${appSection('async function generateFromLine(', '// ─── Read-only compartment')}
     window.checkWriteError = async () => {
       notify('Earlier instruction', { sticky: true });
       let target = null;

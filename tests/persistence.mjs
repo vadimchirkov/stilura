@@ -9,13 +9,9 @@ import { EditorState, Compartment, Transaction } from '@codemirror/state';
 import { history, undo } from '@codemirror/commands';
 import { openStorage } from '../src/storage.js';
 import { resolveDrift, unwrapProse } from '../editing.js';
+import { appSection } from './app-source.mjs';
 
-const source = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-const section = (start, end) => {
-  const at = source.indexOf(start), to = source.indexOf(end, at);
-  assert(at >= 0 && to > at, `Missing production section: ${start}`);
-  return source.slice(at, to);
-};
+const section = appSection;
 
 // Use the production document-opening function and real CodeMirror history.
 {
@@ -184,8 +180,7 @@ for (const mode of ['disk', 'cached', 'fast-forward', 'conflict']) {
     localStorage: { flush: () => new Promise(resolve => { storageDone = resolve; }) },
     api: async (_, options) => { acknowledgements.push(JSON.parse(options.body)); },
   });
-  const at = source.lastIndexOf('\nif (desktop) {');
-  vm.runInContext(source.slice(at, source.indexOf('\n}\nmain().catch', at)), context);
+  vm.runInContext(appSection('\nif (desktop) {', '\n}\nmain().catch', { last: true }), context);
   const saving = events.onmessage({ data: JSON.stringify({ type: 'flush', id: 'ticket' }) });
   assert.equal(context.document.body.inert, true);
   assert.equal(acknowledgements.length, 0);

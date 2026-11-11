@@ -1,14 +1,13 @@
 import { createGenerationLoader, createPassageInput } from '../extension/editor-ui.js';
 import * as writingRules from '../extension/writing-rules.js';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import vm from 'node:vm';
 import { EditorState, StateField, StateEffect, Transaction } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
 import { history, undo, isolateHistory } from '@codemirror/commands';
+import { appSection } from './app-source.mjs';
 
-const source = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-const section = source.slice(source.indexOf('let generationJob = null;'), source.indexOf('// ─── Read-only compartment'));
+const section = appSection('let generationJob = null;', '// ─── Read-only compartment');
 const draft = 'Opening.\n\n/Describe a quiet garden.\n\nEnding.';
 function setup(beforeDone = async () => {}) {
   const jobs = new Set(), notices = [], requests = [], snapshots = [];
@@ -47,7 +46,7 @@ function setup(beforeDone = async () => {}) {
 for (const remote of [false, true]) {
   const test = setup(async ({ view }) => {
     assert.equal(view.state.doc.toString(), draft, 'partial output must never be saved as prose');
-    assert.equal(view.state.field(test.field).text, 'A quiet ');
+    assert.equal(view.state.field(test.field).text, 'A quiet', 'the streaming preview is trimmed like the final text');
     view.dispatch({ changes: { from: 0, insert: 'New opening.\n\n' }, userEvent: 'input.type',
       ...(remote ? { annotations: Transaction.addToHistory.of(false) } : {}) });
     view.dispatch({ selection: { anchor: view.state.doc.length } });

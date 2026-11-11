@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { build } from 'esbuild';
 import { loadPuppeteer } from './browser-driver.mjs';
+import { appSection } from './app-source.mjs';
 
 const puppeteer = loadPuppeteer();
-const source = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-const section = source.slice(source.indexOf('let generationJob = null;'), source.indexOf('// ─── Read-only compartment'));
+const section = appSection('let generationJob = null;', '// ─── Read-only compartment');
 const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
   import { createGenerationLoader } from './extension/editor-ui.js';
   import { EditorState, StateField, StateEffect, Prec } from '@codemirror/state';

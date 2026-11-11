@@ -7,6 +7,7 @@ import { resolveNoteRange, mapNoteAnchors } from '../notes.js';
 import { replacementTarget } from '../editing.js';
 import { ChangeSet, EditorState, StateEffect, StateField, RangeSet } from '@codemirror/state';
 import { Decoration, EditorView } from '@codemirror/view';
+import { appSection, appSource } from './app-source.mjs';
 
 // Editing a note's original occurrence must never move it onto another copy.
 {
@@ -82,12 +83,8 @@ import { Decoration, EditorView } from '@codemirror/view';
   assert.equal(resolveNoteRange(text, point).from, text.indexOf('Target') + 3);
 }
 
-const source = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
-const section = (start, end) => {
-  const from = source.indexOf(start), to = source.indexOf(end, from);
-  assert(from >= 0 && to > from);
-  return source.slice(from, to);
-};
+const source = appSource;
+const section = appSection;
 
 // Overlapping anchors render once; loading and previews own their exact range.
 {
