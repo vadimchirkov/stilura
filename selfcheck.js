@@ -70,6 +70,19 @@ import {
     response = { stopReason, errorMessage: 'Provider failure', content: [] };
     await assert.rejects(context.completeText({ continuation: true }), /Provider failure/);
   }
+  // A ChatGPT plan that refuses the model: the same request goes to the next
+  // model in the chain, and the writer only sees the answer.
+  const asked = [];
+  context.resolveModel = async selected => {
+    asked.push(selected?.model ?? 'gpt-6-luna');
+    return { model: { provider: 'openai-codex', id: asked.at(-1) }, selection: { thinkingLevel: 'medium', ...selected },
+      rt: { completeSimple: async () => asked.length === 1
+        ? { stopReason: 'error', errorMessage: "The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.", content: [] }
+        : { stopReason: 'stop', content: [{ type: 'text', text: 'Answered.' }] } } };
+  };
+  context.nextOfferedModel = (provider, id) => id === 'gpt-6-luna' ? { provider, id: 'gpt-5.6-terra' } : null;
+  assert.equal(await context.completeText({}), 'Answered.');
+  assert.deepEqual(asked, ['gpt-6-luna', 'gpt-5.6-terra']);
 }
 
 // ── Rewrite scope ──

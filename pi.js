@@ -8,6 +8,7 @@ const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ma
 // app cannot hold a prompt contract against it. Kept last so an OpenRouter-only
 // setup still starts, never as the preferred default.
 const FALLBACK_MODELS = [
+  ['openai-codex', 'gpt-6-luna'],
   ['anthropic', 'claude-sonnet-4-6'],
   ['openrouter', 'anthropic/claude-sonnet-4.6'],
   ['openrouter', 'auto'],
@@ -48,10 +49,29 @@ const selectionFor = (model, thinkingLevel = requestedThinking()) => ({
   thinkingLevel: clampThinkingLevel(model, thinkingLevel),
 });
 
+// Pi's catalog lists Codex models a ChatGPT subscription does not serve:
+// they fail with "The '<model>' model is not supported when using Codex with a
+// ChatGPT account." Verified 2026-11-11 on a ChatGPT account, only these
+// worked; the first is the default after sign-in, the rest are the fallback
+// chain in that order. Plans may differ, so a model that is refused at
+// runtime is dropped for the rest of the process.
+const OAUTH_MODELS = { 'openai-codex': ['gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-luna'] };
+const refused = new Set();
+const keyOf = (provider, id) => `${provider}/${id}`;
+const offered = model => !refused.has(keyOf(model.provider, model.id))
+  && (!OAUTH_MODELS[model.provider] || OAUTH_MODELS[model.provider].includes(model.id));
+
+// The next allowlisted model after a refusal, or null when the chain is spent.
+export function nextOfferedModel(provider, id) {
+  refused.add(keyOf(provider, id));
+  const next = (OAUTH_MODELS[provider] ?? []).find(candidate => !refused.has(keyOf(provider, candidate)));
+  return next ? { provider, id: next } : null;
+}
+
 export async function getAgentStatus() {
   try {
     const rt = await runtime();
-    const available = await rt.getAvailable();
+    const available = (await rt.getAvailable()).filter(offered);
     const unique = [...new Map(available.map(model => [`${model.provider}\0${model.id}`, model])).values()];
     const models = unique.map(model => ({
       provider: model.provider,
@@ -147,12 +167,15 @@ export async function getOAuthStatus() {
     if (!provider) continue;
     let configured = false;
     try { configured = !!rt.getProviderAuthStatus(id)?.configured; } catch {}
+    // Chosen on sign-in. Changing the default is one line in OAUTH_MODELS.
+    const recommended = OAUTH_MODELS[id]?.find(model => !refused.has(keyOf(id, model)) && rt.getModel(id, model));
     supported.push({
       id,
       name: provider.name ?? id,
       ...(provider.auth?.oauth && typeof provider.auth.oauth.name === 'string' ? { label: provider.auth.oauth.name } : {}),
       isSubscription: true,
       configured,
+      ...(recommended ? { recommended } : {}),
     });
   }
   return { supported, active: oauthSnapshot(oauthSession) };
@@ -237,6 +260,12 @@ async function resolveModel(selection) {
   if (!selection && process.env.PI_PROVIDER && process.env.PI_MODEL) {
     selection = { provider: process.env.PI_PROVIDER, model: process.env.PI_MODEL, thinkingLevel: requestedThinking() };
   }
+  // A model refused earlier in this process goes straight to its fallback.
+  while (selection && refused.has(keyOf(selection.provider, selection.model))) {
+    const next = nextOfferedModel(selection.provider, selection.model);
+    if (!next) break;
+    selection = { ...selection, model: next.id };
+  }
   if (selection) {
     const model = rt.getModel(selection.provider, selection.model);
     if (!model) throw new Error(`Unknown Pi model ${selection.provider}/${selection.model}`);
@@ -281,6 +310,8 @@ const options = (selection, maxTokens, signal) => ({
 // those models the least reasoning they accept with room to finish.
 const reasoningRequired = new Set();
 const mandatoryReasoning = response => /reasoning is mandatory/i.test(response.errorMessage ?? '');
+// A ChatGPT plan that does not serve the model (see OAUTH_MODELS).
+const notSupported = message => /model is not supported when using Codex with a ChatGPT account/i.test(message ?? '');
 
 export async function completeText({ systemPrompt, userPrompt, selection, maxTokens = 1500, signal, continuation = false }) {
   const resolved = await resolveModel(selection);
@@ -299,6 +330,10 @@ export async function completeText({ systemPrompt, userPrompt, selection, maxTok
   if (continuation && !reasoningRequired.has(modelKey) && response.stopReason === 'error' && mandatoryReasoning(response)) {
     reasoningRequired.add(modelKey);
     response = await ask('minimal');
+  }
+  if (response.stopReason === 'error' && notSupported(response.errorMessage)) {
+    const next = nextOfferedModel(resolved.model.provider, resolved.model.id);
+    if (next) return completeText({ systemPrompt, userPrompt, selection: { ...resolved.selection, model: next.id }, maxTokens, signal, continuation });
   }
   if (response.stopReason === 'error' || response.stopReason === 'aborted') {
     throw new Error(response.errorMessage ?? 'Pi request failed');
@@ -322,10 +357,17 @@ export async function streamText({ systemPrompt, userPrompt, messages, selection
   for (let step = 0; step < 12; step++) {
     signal?.throwIfAborted();
     const stream = resolved.rt.streamSimple(resolved.model, context, options(resolved.selection, maxTokens, signal));
-    let answer;
+    let answer, wrote = false;
     for await (const event of stream) {
-      if (event.type === 'text_delta') onText(event.delta);
-      if (event.type === 'error') throw new Error(event.error.errorMessage ?? 'Pi request failed');
+      if (event.type === 'text_delta') { wrote = true; onText(event.delta); }
+      if (event.type === 'error') {
+        // A refusal arrives before any text, so the next model can answer
+        // the same request without the writer seeing the failure.
+        const next = !wrote && step === 0 && notSupported(event.error.errorMessage)
+          && nextOfferedModel(resolved.model.provider, resolved.model.id);
+        if (next) return streamText({ systemPrompt, userPrompt, messages, selection: { ...resolved.selection, model: next.id }, maxTokens, signal, onText, mcp, onReset });
+        throw new Error(event.error.errorMessage ?? 'Pi request failed');
+      }
       if (event.type === 'done') {
         if (event.reason === 'length') throw new Error('Model output was truncated. Try a smaller passage.');
         answer = event.message;

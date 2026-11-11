@@ -189,6 +189,15 @@
         </nav>
         <div class="settings-panel" id="settings-panel" role="tabpanel">
 
+      <!-- First run without a model: one obvious way in, the full settings one
+           press away. Shown with data-tab="welcome", which hides the tabs. -->
+      <section data-tab="welcome" class="welcome">
+        <h3 id="tab-welcome">Connect a model</h3>
+        <button type="button" id="welcome-chatgpt" class="welcome-primary">Sign in with ChatGPT</button>
+        <p class="settings-hint">Uses your Plus or Pro subscription. A browser tab opens to sign in.</p>
+        <button type="button" id="welcome-custom" class="welcome-custom">Custom models (API key, OpenRouter, …)</button>
+      </section>
+
       <section data-tab="models">
         <h3>Model for all writing actions</h3>
         <!-- Hundreds of models behind one field. A native datalist cannot do
@@ -241,9 +250,14 @@
         <p class="settings-error" id="settings-error" role="alert"></p>
       </section>
 
-      <section data-tab="access" class="tab-end">
+      <section data-tab="access">
         <h3>Subscriptions</h3>
         <div class="configured-keys" id="oauth-providers"></div>
+      </section>
+
+      <!-- The sign-in progress belongs to both: started from the welcome or
+           from Subscriptions, it shows wherever the writer is. -->
+      <section data-tab="access welcome" class="tab-end">
         <div id="oauth-flow" hidden>
           <p class="settings-hint" id="oauth-status" role="status"></p>
           <p class="settings-hint" id="oauth-url-wrap" hidden>Open this link to finish signing in: <a id="oauth-url" href="#" target="_blank" rel="noopener">sign-in link</a></p>

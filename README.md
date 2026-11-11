@@ -12,7 +12,7 @@ A local writing editor with AI continuations, answers and rewrites beside your t
 npx stilura
 ```
 
-Requires Node.js 20+. Run from your writing folder; the editor opens at [localhost:3000](http://127.0.0.1:3000), or the next free port. Open Settings to choose a provider, model and sign-in method or API key.
+Requires Node.js 20+. Run from your writing folder; the editor opens at [localhost:3000](http://127.0.0.1:3000), or the next free port. On first run, sign in with ChatGPT (Plus or Pro) or open custom models to choose a provider, model and API key.
 
 Desktop builds: [Releases](https://github.com/vadimchirkov/stilura/releases) for macOS, Windows and Linux.
 

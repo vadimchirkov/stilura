@@ -631,8 +631,10 @@ async function refreshAgent() {
   // If saved model not in current catalog, do NOT overwrite with default.
   // Leave the stale selection in localStorage so the user sees it in
   // settings and can re-pick. The defaultSelection is only used when
-  // there is no saved selection at all.
-  else if (!agentSelection && agentInfo.defaultSelection) {
+  // there is no saved selection at all — or when it was a ChatGPT model the
+  // subscription refused or no longer serves: the writer never picked that
+  // one by hand, sign-in did.
+  else if ((!agentSelection || agentSelection.provider === 'openai-codex') && agentInfo.defaultSelection) {
     agentSelection = normalizeSelection(agentInfo.defaultSelection);
     if (agentSelection) localStorage.setItem('wa-agent', JSON.stringify(agentSelection));
   }
@@ -648,6 +650,7 @@ function showSettingsTab(name, focus = false) {
     tab.tabIndex = on ? 0 : -1;
     if (on && focus) tab.focus();
   }
+  // The welcome has no tab; its heading carries the same id pattern.
   document.getElementById('settings-panel').setAttribute('aria-labelledby', `tab-${name}`);
   document.getElementById('settings-panel').scrollTop = 0;
 }
@@ -668,6 +671,8 @@ showSettingsTab(settingsDialog.dataset.tab);
 // and leaves the tab the writer was last on.
 async function openSettings(tab) {
   if (typeof tab === 'string') showSettingsTab(tab);
+  // The gear never reopens the first-run welcome; that is ensureAgent's call.
+  else if (settingsDialog.dataset.tab === 'welcome') showSettingsTab('models');
   settingsError.textContent = '';
   try { await refreshAgent(); } catch (error) { settingsError.textContent = error.message; }
   await refreshOAuth();
@@ -677,6 +682,7 @@ async function openSettings(tab) {
   renderSubscriptions();
   if (!settingsDialog.open) settingsDialog.showModal();
   else pollOAuth();
+  if (settingsDialog.dataset.tab === 'welcome') document.getElementById('welcome-chatgpt').focus();
 }
 
 settingsOpen.addEventListener('click', openSettings);
@@ -708,8 +714,7 @@ async function ensureAgent() {
   // before telling the writer their setup is missing.
   try { await refreshAgent(); } catch {}
   if (currentAgent()) return true;
-  notify('No model selected — add an API key or pick a model in settings.');
-  openSettings();
+  openSettings('welcome');
   return false;
 }
 
@@ -726,7 +731,6 @@ modelEl.addEventListener('change', () => {
 });
 // A popover left open behind a closed dialog comes back with it.
 settingsDialog.addEventListener('close', () => {
-  stopOAuthPoll();
   for (const popover of document.querySelectorAll('.combo')) {
     if (popover.matches(':popover-open')) popover.hidePopover();
   }
@@ -816,6 +820,13 @@ async function removeProviderKey(provider) {
   settingsError.textContent = '';
   try {
     agentInfo = await api('/api/agent/credentials', { method: 'DELETE', body: JSON.stringify({ provider }) });
+    // Signed out of the model in use: forget it, so the next AI action shows
+    // the welcome (or the default model, if another provider has a key).
+    if (agentSelection?.provider === provider) {
+      agentSelection = draftSelection = null;
+      localStorage.removeItem('wa-agent');
+      await refreshAgent();
+    }
     renderModelSettings();
       renderCredentials();
     await refreshOAuth();
@@ -919,7 +930,9 @@ function renderOAuthFlow() {
 
 async function pollOAuth() {
   stopOAuthPoll();
-  if (!settingsDialog.open || !oauthActivePending()) return;
+  // Keeps going with the dialog closed: the browser sign-in finishes in
+  // another tab, and the writer may have closed settings to wait.
+  if (!oauthActivePending()) return;
   try {
     const status = await api('/api/agent/oauth/status');
     oauthInfo = status;
@@ -928,14 +941,26 @@ async function pollOAuth() {
       oauthTimer = setTimeout(pollOAuth, 2000);
     } else if (oauthInfo.active?.step === 'done') {
       await refreshAgent();
-      draftSelection = currentAgent();
-      renderModelSettings();
-          renderCredentials();
       // The chip reads oauthInfo.supported: re-read it, or the just-signed-in
       // subscription keeps showing "not connected / Sign in" until reopen.
       await refreshOAuth();
+      signedIn(oauthInfo.active?.provider ?? '');
     }
   } catch { oauthTimer = setTimeout(pollOAuth, 5000); }
+}
+
+// Signing in is choosing that provider: switch to its recommended model even
+// over an earlier choice, then get out of the way.
+function signedIn(provider) {
+  const recommended = oauthInfo.supported.find(item => item.id === provider)?.recommended;
+  draftSelection = recommended ? { provider, model: recommended, thinkingLevel: 'medium' } : currentAgent();
+  saveAgentSelection();
+  renderModelSettings();
+  renderCredentials();
+  const chosen = agentInfo.models.find(item => item.provider === currentAgent()?.provider && item.model === currentAgent()?.model);
+  if (!chosen || chosen.provider !== provider) return;
+  closeSettingsAnimated();
+  notify(`Signed in with ChatGPT. Writing with ${chosen.name ?? chosen.model}.`, { action: () => openSettings('models'), label: 'Change' });
 }
 
 async function startOAuthFlow(provider, method) {
@@ -992,7 +1017,14 @@ oauthCancelEl.addEventListener('click', async () => {
   } catch (error) { settingsError.textContent = error.message; }
 });
 
-refreshAgent().catch(error => notifyProblem({ say: 'Could not load models.', act: 'retry', detail: error.message }, refreshAgent));
+document.getElementById('welcome-chatgpt').addEventListener('click', () => startOAuthFlow('openai-codex', 'browser'));
+document.getElementById('welcome-custom').addEventListener('click', () => showSettingsTab('models', true));
+
+// First run: no model anywhere means every AI action would fail, so offer the
+// way in at once instead of waiting for the writer to hit that wall.
+refreshAgent().then(() => {
+  if (!currentAgent() && !settingsDialog.open) openSettings('welcome');
+}).catch(error => notifyProblem({ say: 'Could not load models.', act: 'retry', detail: error.message }, refreshAgent));
 
 // ─── Ghost text ─────────────────────────────────────────────────────────────────
 //
