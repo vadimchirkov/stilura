@@ -45,6 +45,6 @@ Run `EXTENSION_QWEN=1 npm run test:extension` to repeat the three core flows wit
 
 ## Shared editor code
 
-Both frontends import `extension/writing-rules.js` for command parsing, continuation eligibility, review keys, variant validation and regeneration instructions. `extension/editor-ui.js` owns the rewrite input, pixel loader and their CSS, including skeletons and reduced motion. Change these modules to update both editors.
+Both frontends import `extension/writing-rules.js` for command parsing, continuation eligibility, review keys, variant validation and regeneration instructions. `extension/editor-ui.js` owns the rewrite input and the shared CSS, including the loading skeleton and reduced motion. Change these modules to update both editors.
 
 `src/app.js` adapts these controls to CodeMirror; `extension/content.js` adapts them to native fields and contenteditable. Positioning, selection, applying edits, undo and cancellation stay with their editor APIs. Requests and model prompts are shared by the server in `index.js` and `tasks.js`.

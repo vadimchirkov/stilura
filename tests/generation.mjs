@@ -1,4 +1,4 @@
-import { createGenerationLoader, createPassageInput } from '../extension/editor-ui.js';
+import { createPassageInput } from '../extension/editor-ui.js';
 import * as writingRules from '../extension/writing-rules.js';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -12,7 +12,7 @@ function setup(beforeDone = async () => {}) {
   const jobs = new Set(), notices = [], requests = [], snapshots = [];
   const view = { composing: false };
   const context = vm.createContext({
-    ...writingRules, createGenerationLoader, createPassageInput,
+    ...writingRules, createPassageInput,
     EditorState, StateField, StateEffect, EditorView, Decoration, WidgetType, isolateHistory,
     AbortController, documentKey: 'draft', loadingDocument: false, savePaused: false, jobs,
     clearGhostFx: StateEffect.define(), cancelSuggestion() {},
@@ -169,7 +169,7 @@ for (const blocked of ['inside', 'paused', 'readonly', 'switch']) {
   assert.equal(test.snapshots.length, 0, blocked);
 }
 
-// Waiting and regeneration show only the shared pixel loader.
+// Waiting and regeneration show the shared skeleton in place of the words.
 {
   const test = setup();
   // The widget is module code: it builds with the page's document.
@@ -180,19 +180,21 @@ for (const blocked of ['inside', 'paused', 'readonly', 'switch']) {
     append(...children) { this.children.push(...children); },
   }) };
   const Widget = vm.runInContext('GenerationWidget', test.context);
-  const waiting = new Widget({ job: {}, phase: 'streaming', text: '' });
-  const dom = waiting.toDOM(), [grid] = dom.children[0].children;
+  const waiting = new Widget({ job: {}, phase: 'streaming', text: '', instruction: 'Describe a quiet garden.' });
+  const dom = waiting.toDOM(), [skeleton] = dom.children;
   assert.equal(dom.attributes['aria-busy'], 'true');
-  assert.equal(grid.attributes['aria-hidden'], 'true');
-  assert.deepEqual(grid.children.map(cell => cell.style['--cell-delay']), ['90', '180', '270', '0', '90', '180', '90', '180', '270']);
-  assert.equal(dom.children[0].children.length, 1, 'loader contains only the pixel grid');
-  assert.equal(dom.children[0].attributes['aria-label'], 'Generating text');
+  assert.equal(dom.children.length, 1, 'waiting shows only the skeleton');
+  assert.equal(skeleton.className, 'generation-skeleton');
+  assert.equal(skeleton.textContent, 'Describe a quiet garden.', 'the skeleton takes the shape of the request');
+  assert.equal(skeleton.attributes['aria-hidden'], 'true');
+  assert.equal(new Widget({ job: {}, phase: 'streaming', text: '' }).toDOM().children[0].textContent, 'Writing a new passage…');
 
   const regeneration = { job: {}, phase: 'streaming', text: 'Previous', previousText: 'Previous' };
   const regenerating = new Widget(regeneration), regen = regenerating.toDOM();
-  assert.equal(regen.children[0].children.length, 1);
-  assert.equal(regen.children[1].textContent, 'Previous');
-  assert(!regenerating.eq(new Widget({ ...regeneration, previousText: null })), 'first tokens remove the loader even when they repeat the old text');
+  assert.equal(regen.children.length, 1);
+  assert.equal(regen.children[0].className, 'generation-skeleton');
+  assert.equal(regen.children[0].textContent, 'Previous', 'regeneration waits in the shape of the old candidate');
+  assert(!regenerating.eq(new Widget({ ...regeneration, previousText: null })), 'first tokens replace the skeleton even when they repeat the old text');
 
   for (const phase of ['streaming', 'review']) {
     const text = new Widget({ job: {}, phase, text: 'Ready' }).toDOM();

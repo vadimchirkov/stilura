@@ -2,7 +2,6 @@ import { EditorView, Decoration, WidgetType } from '@codemirror/view';
 import { StateEffect, StateField } from '@codemirror/state';
 import { isolateHistory } from '@codemirror/commands';
 import { slashCommand, reviewAction } from '../../extension/writing-rules.js';
-import { createGenerationLoader } from '../../extension/editor-ui.js';
 import { clearGhostFx } from '../editor/ghost.js';
 import { modelError } from '../notices.js';
 
@@ -83,10 +82,17 @@ export function createGenerate({
         editGeneration(view, offset); view.focus();
       });
       wrap.setAttribute('aria-busy', String(this.value.phase === 'streaming'));
+      // Until the first new words arrive the place waits as a skeleton, the
+      // same sheen as a passage being rewritten: shaped like the candidate
+      // being replaced, else like the request. Announcements say what is
+      // happening, so the placeholder words stay out of the accessibility tree.
       if (this.value.phase === 'streaming' && (!this.value.text || this.value.previousText != null)) {
-        wrap.append(createGenerationLoader(document));
-      }
-      if (this.value.text) {
+        const skeleton = document.createElement('span');
+        skeleton.className = 'generation-skeleton';
+        skeleton.setAttribute('aria-hidden', 'true');
+        skeleton.textContent = this.value.previousText || this.value.instruction || 'Writing a new passage…';
+        wrap.append(skeleton);
+      } else if (this.value.text) {
         const text = document.createElement(this.value.inline ? 'span' : 'div');
         text.className = 'cm-suggest';
         // Keep the final empty line measurable while a stream ends with a newline.

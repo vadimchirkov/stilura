@@ -5,40 +5,6 @@ export const EDITOR_UI_CSS = `
 .passage-input:focus-visible{outline:2px solid var(--accent,#7796c8);outline-offset:2px}
 .passage-input::placeholder{color:inherit;opacity:.6}
 @supports not (field-sizing:content){.passage-input{width:240px}}
-/* Drive wave: each column follows the centre cell, matching the 3×3 chevron. */
-.generation-loading {
-  display: inline-flex;
-  align-items: baseline;
-  margin-inline-end: 10px;
-  vertical-align: baseline;
-  white-space: nowrap;
-  font: 500 13px/1 var(--ui-font, system-ui, sans-serif);
-  color: var(--muted, #828282);
-  user-select: none;
-  pointer-events: none;
-}
-.generation-pixels {
-  align-self: center;
-  display: grid;
-  grid-template-columns: repeat(3, 4px);
-  grid-auto-rows: 4px;
-  gap: 1.5px;
-  flex: none;
-}
-.generation-pixels > span {
-  background: var(--text, currentColor);
-  border-radius: 1px;
-  opacity: .15;
-  animation: generation-pixel-on 650ms ease-in-out infinite;
-  animation-delay: calc(var(--cell-delay) * 1ms);
-}
-@keyframes generation-pixel-on {
-  0%, 60%, 100% { opacity: .15; }
-  25% { opacity: .85; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .generation-pixels > span { animation: none; }
-}
 @media (forced-colors: active) {
   .generation-skeleton { background: GrayText; }
 }
@@ -82,16 +48,4 @@ export function createPassageInput({ onSubmit, onChange = () => {}, onClose }) {
   dom.addEventListener('submit', event => { event.preventDefault(); submit(); });
   dom.append(input);
   return { dom, input, fit };
-}
-
-export function createGenerationLoader(doc = document) {
-  const dom = doc.createElement('span'); dom.className = 'generation-loading';
-  dom.setAttribute('role', 'status'); dom.setAttribute('aria-label', 'Generating text');
-  const grid = doc.createElement('span'); grid.className = 'generation-pixels'; grid.setAttribute('aria-hidden', 'true');
-  for (let i = 0; i < 9; i++) {
-    const cell = doc.createElement('span');
-    cell.style.setProperty('--cell-delay', String((i % 3 + Math.abs(Math.floor(i / 3) - 1)) * 90)); grid.append(cell);
-  }
-  dom.append(grid);
-  return dom;
 }

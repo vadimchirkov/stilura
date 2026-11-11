@@ -2,7 +2,7 @@
   if (document.documentElement.dataset.stiluraExtension) return;
   document.documentElement.dataset.stiluraExtension = '1';
   const { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, ghostRemainder, distinctVariants, reviewAction, rewriteInstruction } = await import(chrome.runtime.getURL('writing-rules.js'));
-  const { EDITOR_UI_CSS, createPassageInput, createGenerationLoader } = await import(chrome.runtime.getURL('editor-ui.js'));
+  const { EDITOR_UI_CSS, createPassageInput } = await import(chrome.runtime.getURL('editor-ui.js'));
   let review = null, fallback = null, armed = null, dismissed = null, pausedUntil = 0;
   let config = {}, field = null, timer, scheduled = null, port = null, target = null, actionType = '', suggestion = '', composing = false;
   let inlinePreview = null;
@@ -271,9 +271,6 @@
     for (const property of properties) mirror.style[property] = css[property];
     mirror.style.width = el.clientWidth + 'px';
     const preview = document.createElement('span'); preview.className = 'preview';
-    if (phase === 'streaming') {
-      preview.append(createGenerationLoader());
-    }
     if (phase === 'streaming' && !text) {
       const skeleton = document.createElement('span'); skeleton.className = 'generation-skeleton';
       skeleton.textContent = fallback?.variants[fallback.index] || saved.document.slice(saved.from, saved.to).replace(/^\//, '') || 'Writing a new passage…';

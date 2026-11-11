@@ -65,7 +65,7 @@ try {
   }
   await page.evaluate(() => window.show({ inline: false, phase: 'streaming', text: '' }));
   await new Promise(resolve => setTimeout(resolve, 80));
-  assert.equal(await page.$eval('.cm-cursor', el => el.getBoundingClientRect().height), 0, 'waiting shows loader without an editing caret');
+  assert.equal(await page.$eval('.cm-cursor', el => el.getBoundingClientRect().height), 0, 'waiting shows the skeleton without an editing caret');
   console.log('Cursor browser checks passed');
 } finally {
   await browser.close();

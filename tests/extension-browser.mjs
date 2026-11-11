@@ -137,15 +137,9 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await submitRequest();
   await assistant.locator('.generation-skeleton').waitFor();
-  assert.equal(await assistant.locator('.generation-pixels > span').count(), 9);
-  assert.equal(await assistant.locator('.generation-loading').textContent(), '');
-  assert.equal(await assistant.locator('.generation-loading').getAttribute('aria-label'), 'Generating text');
-  for (const selector of ['.generation-pixels > span', '.generation-skeleton']) {
-    assert.equal(await assistant.locator(selector).first().evaluate(el => getComputedStyle(el).animationName), 'none');
-  }
+  assert.equal(await assistant.locator('.generation-skeleton').evaluate(el => getComputedStyle(el).animationName), 'none');
   await page.screenshot({ path: path.join(artifacts, 'loading-rewrite.png') });
   await assistant.locator('.inline[data-phase="review"]').waitFor();
-  assert.equal(await assistant.locator('.generation-loading').count(), 0);
   assert.equal(await assistant.locator('.generation-skeleton').count(), 0);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.screenshot({ path: path.join(artifacts, 'rewrite.png') });
@@ -160,14 +154,11 @@ try {
   const beforeGeneration = await page.evaluate(() => window.inputEvents);
   await plain.press(process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter');
   await assistant.locator('.generation-skeleton').waitFor();
-  assert.equal(await assistant.locator('.generation-pixels > span').count(), 9);
-  assert.equal(await assistant.locator('.generation-loading').textContent(), '');
   assert.equal(await assistant.locator('.generation-skeleton').evaluate(el => getComputedStyle(el).animationName), 'skeleton-sheen');
   assert.equal(await plain.inputValue(), 'Dear Alex,\n/write a polite reply');
   await page.screenshot({ path: path.join(artifacts, 'loading-generation.png') });
   await assistant.locator('.inline[data-phase="streaming"] .preview').filter({ hasText: 'Partial fixture answer' }).waitFor();
   assert.equal(await assistant.locator('.generation-skeleton').count(), 0);
-  assert.equal(await assistant.locator('.generation-loading').count(), 1);
   assert.equal(await assistant.locator('.panel').isVisible(), false);
   assert.equal(await assistant.locator('.inline button').count(), 0);
   await assistant.locator('.inline[data-phase="review"]').waitFor();
@@ -349,8 +340,6 @@ try {
   assert.equal(await plain.evaluate(el => document.activeElement === el), true);
   assert.equal(await assistant.locator('.preview').innerText(), 'peaceful');
   await plain.press('r');
-  await assistant.locator('.generation-loading').waitFor();
-  assert.equal(await assistant.locator('.generation-loading').textContent(), '');
   await assistant.locator('.generation-skeleton').waitFor();
   await assistant.locator('.inline[data-phase="review"]').waitFor();
   assert.equal(await assistant.locator('.preview').innerText(), 'tranquil');
