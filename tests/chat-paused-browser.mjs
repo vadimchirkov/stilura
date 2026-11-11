@@ -99,7 +99,7 @@ try {
     return !notice.hidden && getComputedStyle(notice).opacity === '1' && notice.getBoundingClientRect().height > 0;
   });
   await page.click('#edit-feedback .edit-feedback-undo');
-  assert.equal(await page.evaluate(() => openedSettings), 'access');
+  assert.equal(await page.evaluate(() => openedSettings), 'models');
   for (const [error, message] of [
     ['401 bad key', 'API key was rejected'], ['404 missing model', 'model is not available'],
     ['408 timeout', 'model took too long'], ['429 overloaded', 'model is rate-limited'],

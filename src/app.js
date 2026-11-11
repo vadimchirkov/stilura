@@ -61,10 +61,15 @@ const settingsDialog = document.getElementById('settings-dialog');
 const providerEl    = document.getElementById('agent-provider');
 const modelEl       = document.getElementById('agent-model');
 const thinkingEl    = document.getElementById('agent-thinking');
-const keyProviderEl = document.getElementById('key-provider');
 const apiKeyEl      = document.getElementById('api-key');
 const keyAddEl      = document.getElementById('key-add');
-const configuredKeys = document.getElementById('configured-keys');
+const modelField    = document.getElementById('model-field');
+const thinkingField = document.getElementById('thinking-field');
+const connectRow    = document.getElementById('connect-row');
+const connectSignin = document.getElementById('connect-signin');
+const connectKey    = document.getElementById('connect-key');
+const connectionLine = document.getElementById('connection-line');
+const connectedList = document.getElementById('connected-list');
 const settingsError = document.getElementById('settings-error');
 const modelHint     = document.getElementById('model-hint');
 const chatStream    = document.getElementById('chat-stream');
@@ -277,7 +282,7 @@ function modelError(error) {
     act: [401, 402, 403, 404, 413].includes(status) ? 'settings' : 'retry',
     // Where the fix is: a rejected or unfunded key is under access, a model
     // the key cannot use or that does not exist is picked under models.
-    tab: status === 401 || status === 402 ? 'access' : 'models',
+    tab: 'models',
     detail,
   };
 }
@@ -549,64 +554,129 @@ function fieldValue(field) {
   return combo ? combo.value : field.value;
 }
 
+// Every provider the writer can reach, connected or not, in one list: the
+// ones with models (connected), the ones that take an API key, and the
+// subscriptions. Connected first, so the usual choice is at the top.
+function providerChoices() {
+  const byId = new Map();
+  const add = (id, name, extra) => byId.set(id, { id, name, ...byId.get(id), ...extra });
+  for (const provider of agentInfo.authProviders) add(provider.id, provider.name, { key: provider });
+  for (const provider of oauthInfo.supported) add(provider.id, provider.label ?? provider.name, { signin: provider, name: provider.label ?? provider.name });
+  for (const provider of agentInfo.providers) add(provider.id, provider.name);
+  const choices = [...byId.values()].map(choice => ({ ...choice, connected: agentInfo.models.some(model => model.provider === choice.id) }));
+  return choices.sort((a, b) => b.connected - a.connected || a.name.localeCompare(b.name));
+}
+
+// A provider picked in the list but not connected yet. It is not a selection:
+// nothing is saved until it connects and has a model.
+let draftProvider = null;
+
 function renderModelSettings() {
   draftSelection = normalizeSelection(draftSelection)
     ?? normalizeSelection(agentInfo.defaultSelection)
     ?? (agentInfo.models[0] ? normalizeSelection({ ...agentInfo.models[0], thinkingLevel: 'medium' }) : null);
-  const providerIds = [...new Set(agentInfo.models.map(model => model.provider))];
-  setOptions(providerEl, providerIds.map(id => ({
-    value: id,
-    label: agentInfo.providers.find(provider => provider.id === id)?.name ?? id,
-  })), draftSelection?.provider);
-  const models = agentInfo.models.filter(model => model.provider === fieldValue(providerEl));
-  setOptions(modelEl, models.map(model => ({ value: model.model, label: model.name || model.model })), draftSelection?.model);
-  const model = models.find(item => item.model === fieldValue(modelEl));
-  const levels = levelsFor(model);
-  setOptions(thinkingEl, levels.map(level => ({ value: level, label: thinkingNames[level] ?? level })), draftSelection?.thinkingLevel);
-  draftSelection = model ? { provider: model.provider, model: model.model, thinkingLevel: fieldValue(thinkingEl) } : null;
-  modelHint.textContent = agentInfo.models.length ? '' : 'Add an API key or configure Pi authentication to see models.';
+  const choices = providerChoices();
+  setOptions(providerEl, choices.map(choice => ({
+    value: choice.id,
+    label: choice.connected ? choice.name : `${choice.name} · not connected`,
+  })), draftProvider ?? draftSelection?.provider);
+  const provider = choices.find(choice => choice.id === fieldValue(providerEl));
+  const connected = !!provider?.connected;
+  modelField.hidden = thinkingField.hidden = !connected;
+  if (connected) {
+    const models = agentInfo.models.filter(model => model.provider === provider.id);
+    setOptions(modelEl, models.map(model => ({ value: model.model, label: model.name || model.model })), draftSelection?.model);
+    const model = models.find(item => item.model === fieldValue(modelEl));
+    const levels = levelsFor(model);
+    setOptions(thinkingEl, levels.map(level => ({ value: level, label: thinkingNames[level] ?? level })), draftSelection?.thinkingLevel);
+    draftSelection = model ? { provider: model.provider, model: model.model, thinkingLevel: fieldValue(thinkingEl) } : null;
+  }
+  modelHint.textContent = choices.length ? '' : 'No providers are available. Check the Pi installation.';
+  renderConnection(provider, choices);
 }
 
-function renderCredentials() {
-  setOptions(keyProviderEl, agentInfo.authProviders.map(provider => ({ value: provider.id, label: provider.name })), keyProviderEl.value || 'openai');
-  apiKeyEl.placeholder = agentInfo.authProviders.find(provider => provider.id === keyProviderEl.value)?.label ?? 'API key';
-  configuredKeys.replaceChildren(...agentInfo.authProviders.filter(provider => provider.configured).map(provider => {
-    const chip = document.createElement('div');
-    chip.className = 'key-chip';
-    const dot = document.createElement('i');
-    const name = document.createElement('span');
-    name.textContent = provider.source === 'environment' ? `${provider.name} · environment` : provider.name;
-    chip.append(dot, name);
-    if (provider.source !== 'environment') {
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.textContent = '×';
-      remove.title = remove.ariaLabel = `Remove ${provider.name} key`;
-      // A removed key cannot be brought back from here: the first press only
-      // arms the button, the second removes. Blur or Escape disarms it.
-      const disarm = () => {
-        remove.classList.remove('is-armed');
-        remove.textContent = '×';
-        remove.ariaLabel = `Remove ${provider.name} key`;
-      };
-      remove.addEventListener('click', () => {
-        if (remove.classList.contains('is-armed')) return removeProviderKey(provider.id);
-        remove.classList.add('is-armed');
-        remove.textContent = 'Remove key';
-        remove.ariaLabel = `Confirm: remove ${provider.name} key`;
-      });
-      remove.addEventListener('blur', disarm);
-      remove.addEventListener('keydown', event => {
-        if (event.key !== 'Escape' || !remove.classList.contains('is-armed')) return;
-        event.preventDefault();
-        event.stopPropagation();
-        disarm();
-      });
-      chip.append(remove);
-    }
-    return chip;
-  }));
+// Under the fields: how the chosen provider connects (or how it is connected,
+// with the way back out), and a short list of everything connected.
+function renderConnection(provider, choices) {
+  const connected = !!provider?.connected;
+  connectRow.hidden = !provider || connected;
+  connectSignin.hidden = connectRow.hidden || !provider.signin;
+  connectKey.hidden = connectRow.hidden || !!provider.signin || !provider.key;
+  if (!connectKey.hidden) apiKeyEl.placeholder = provider.key.label ?? 'API key';
+  const line = [];
+  if (connected && provider.signin?.configured) {
+    line.push('Connected via sign-in · ', linkButton('Sign out', `Sign out of ${provider.name}`, () => removeProviderKey(provider.id)));
+  } else if (connected && provider.key?.configured && provider.key.source !== 'environment') {
+    line.push('Connected via API key · ', removeKeyButton(provider));
+  } else if (connected) {
+    line.push(provider.key?.source === 'environment' ? 'Connected via an environment variable' : 'Connected');
+  } else if (provider && !provider.signin && !provider.key) {
+    line.push('This provider is configured outside Stilura.');
+  }
+  connectionLine.replaceChildren(...line);
+  const others = choices.filter(choice => choice.connected);
+  connectedList.replaceChildren(...(others.length ? ['Connected: '] : []), ...others.flatMap((choice, index) => [
+    ...(index ? [' · '] : []),
+    linkButton(choice.name, `Use ${choice.name}`, () => selectProvider(choice.id)),
+  ]));
 }
+
+function linkButton(label, title, run) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.title = title;
+  button.addEventListener('click', run);
+  return button;
+}
+
+// A removed key cannot be brought back from here: the first press only arms
+// the button, the second removes. Blur or Escape disarms it.
+function removeKeyButton(provider) {
+  const remove = linkButton('Remove', `Remove ${provider.name} key`, () => {
+    if (remove.classList.contains('is-armed')) return removeProviderKey(provider.id);
+    remove.classList.add('is-armed');
+    remove.textContent = 'Remove key';
+    remove.ariaLabel = `Confirm: remove ${provider.name} key`;
+  });
+  const disarm = () => {
+    remove.classList.remove('is-armed');
+    remove.textContent = 'Remove';
+    remove.removeAttribute('aria-label');
+  };
+  remove.addEventListener('blur', disarm);
+  remove.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !remove.classList.contains('is-armed')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    disarm();
+  });
+  return remove;
+}
+
+// The model a provider starts on: the one in use if it is this provider's,
+// else the server's default or sign-in recommendation for it, else its first
+// reasoning model.
+function modelFor(id) {
+  const models = agentInfo.models.filter(model => model.provider === id);
+  const named = [agentSelection, agentInfo.defaultSelection,
+    { model: oauthInfo.supported.find(provider => provider.id === id)?.recommended }]
+    .map(selection => (!selection?.provider || selection.provider === id) && models.find(model => model.model === selection?.model))
+    .find(Boolean);
+  return named || models.find(model => model.reasoning) || models[0];
+}
+
+// Picking a connected provider picks a model at once and saves it; an
+// unconnected one only shows how to connect it.
+function selectProvider(id) {
+  settingsError.textContent = '';
+  const chosen = modelFor(id);
+  draftProvider = chosen ? null : id;
+  if (chosen) draftSelection = { provider: id, model: chosen.model, thinkingLevel: agentSelection?.provider === id ? agentSelection.thinkingLevel : 'medium' };
+  renderModelSettings();
+  if (chosen) saveAgentSelection();
+}
+const connectedTo = selectProvider;
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
@@ -650,7 +720,6 @@ function showSettingsTab(name, focus = false) {
     tab.tabIndex = on ? 0 : -1;
     if (on && focus) tab.focus();
   }
-  // The welcome has no tab; its heading carries the same id pattern.
   document.getElementById('settings-panel').setAttribute('aria-labelledby', `tab-${name}`);
   document.getElementById('settings-panel').scrollTop = 0;
 }
@@ -668,21 +737,21 @@ for (const tab of settingsTabs) {
 showSettingsTab(settingsDialog.dataset.tab);
 
 // `tab` picks the tab to land on; a click passes its event, which is ignored
-// and leaves the tab the writer was last on.
+// and leaves the tab the writer was last on. 'welcome' is the first-run way
+// in: the Model tab with ChatGPT already chosen and its Sign in focused.
 async function openSettings(tab) {
-  if (typeof tab === 'string') showSettingsTab(tab);
-  // The gear never reopens the first-run welcome; that is ensureAgent's call.
-  else if (settingsDialog.dataset.tab === 'welcome') showSettingsTab('models');
+  const welcome = tab === 'welcome';
+  if (typeof tab === 'string') showSettingsTab(welcome ? 'models' : tab);
   settingsError.textContent = '';
   try { await refreshAgent(); } catch (error) { settingsError.textContent = error.message; }
   await refreshOAuth();
   draftSelection = currentAgent();
+  draftProvider = welcome && oauthInfo.supported.some(provider => provider.id === 'openai-codex') ? 'openai-codex' : null;
   renderModelSettings();
-  renderCredentials();
-  renderSubscriptions();
+  renderOAuthFlow();
   if (!settingsDialog.open) settingsDialog.showModal();
   else pollOAuth();
-  if (settingsDialog.dataset.tab === 'welcome') document.getElementById('welcome-chatgpt').focus();
+  if (welcome && !connectSignin.hidden) document.getElementById('connect-browser').focus();
 }
 
 settingsOpen.addEventListener('click', openSettings);
@@ -718,12 +787,7 @@ async function ensureAgent() {
   return false;
 }
 
-providerEl.addEventListener('change', () => {
-  const first = agentInfo.models.find(model => model.provider === fieldValue(providerEl));
-  if (first) draftSelection = { provider: first.provider, model: first.model, thinkingLevel: 'medium' };
-  renderModelSettings();
-  saveAgentSelection();
-});
+providerEl.addEventListener('change', () => selectProvider(fieldValue(providerEl)));
 modelEl.addEventListener('change', () => {
   draftSelection = { provider: fieldValue(providerEl), model: fieldValue(modelEl), thinkingLevel: draftSelection?.thinkingLevel ?? 'medium' };
   renderModelSettings();
@@ -739,7 +803,6 @@ thinkingEl.addEventListener('change', () => {
   if (draftSelection) draftSelection = { ...draftSelection, thinkingLevel: fieldValue(thinkingEl) };
   saveAgentSelection();
 });
-keyProviderEl.addEventListener('change', renderCredentials);
 
 // The settings form has no method="dialog" on purpose: Enter in the key field
 // adds the key (below) instead of closing the whole dialog. Stop any implicit
@@ -777,14 +840,18 @@ async function addProviderKey() {
   }
   settingsError.textContent = '';
   keyAddEl.disabled = true;
+  const provider = fieldValue(providerEl);
   try {
     agentInfo = await api('/api/agent/credentials', {
       method: 'POST',
-      body: JSON.stringify({ provider: keyProviderEl.value, apiKey: apiKeyEl.value }),
+      body: JSON.stringify({ provider, apiKey: apiKeyEl.value }),
     });
     apiKeyEl.value = '';
-    renderModelSettings();
-      renderCredentials();
+    if (agentInfo.models.some(model => model.provider === provider)) connectedTo(provider);
+    else {
+      renderModelSettings();
+      settingsError.textContent = 'The key was saved, but this provider offers no models with it.';
+    }
   } catch (error) {
     settingsError.textContent = error.message;
     apiKeyEl.setAttribute('aria-invalid', 'true');
@@ -827,8 +894,8 @@ async function removeProviderKey(provider) {
       localStorage.removeItem('wa-agent');
       await refreshAgent();
     }
-    renderModelSettings();
-      renderCredentials();
+    // Stay on that provider, now showing how to connect it again.
+    draftProvider = provider;
     await refreshOAuth();
   } catch (error) { settingsError.textContent = error.message; }
 }
@@ -838,7 +905,6 @@ async function removeProviderKey(provider) {
 // Codex OAuth flow. The server runs Pi's login in the background; here we
 // show the auth URL (or device code), offer the manual-paste fallback, and
 // poll until the flow settles.
-const oauthProvidersEl = document.getElementById('oauth-providers');
 const oauthFlowEl   = document.getElementById('oauth-flow');
 const oauthStatusEl = document.getElementById('oauth-status');
 const oauthUrlWrap  = document.getElementById('oauth-url-wrap');
@@ -862,38 +928,9 @@ function oauthActivePending() {
   return step === 'starting' || step === 'url' || step === 'device';
 }
 
+// Sign-in state changes what the provider list and connect row show.
 function renderSubscriptions() {
-  oauthProvidersEl.replaceChildren(...oauthInfo.supported.map(provider => {
-    const chip = document.createElement('div');
-    chip.className = 'key-chip';
-    const dot = document.createElement('i');
-    if (!provider.configured) dot.className = 'is-off';
-    const name = document.createElement('span');
-    name.textContent = `${provider.label ?? provider.name} · ${provider.configured ? 'connected' : 'not connected'}`;
-    chip.append(dot, name);
-    if (provider.configured) {
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.textContent = 'Sign out';
-      remove.title = `Sign out of ${provider.label ?? provider.name}`;
-      remove.addEventListener('click', () => removeProviderKey(provider.id));
-      chip.append(remove);
-    } else {
-      const signin = document.createElement('button');
-      signin.type = 'button';
-      signin.textContent = 'Sign in';
-      signin.title = `Sign in with ${provider.label ?? provider.name}`;
-      signin.addEventListener('click', () => startOAuthFlow(provider.id, 'browser'));
-      chip.append(signin);
-      const device = document.createElement('button');
-      device.type = 'button';
-      device.textContent = 'Device code';
-      device.title = 'Sign in with a code on another device (no local browser callback)';
-      device.addEventListener('click', () => startOAuthFlow(provider.id, 'device_code'));
-      chip.append(device);
-    }
-    return chip;
-  }));
+  renderModelSettings();
   renderOAuthFlow();
 }
 
@@ -952,11 +989,11 @@ async function pollOAuth() {
 // Signing in is choosing that provider: switch to its recommended model even
 // over an earlier choice, then get out of the way.
 function signedIn(provider) {
+  draftProvider = null;
   const recommended = oauthInfo.supported.find(item => item.id === provider)?.recommended;
   draftSelection = recommended ? { provider, model: recommended, thinkingLevel: 'medium' } : currentAgent();
   saveAgentSelection();
   renderModelSettings();
-  renderCredentials();
   const chosen = agentInfo.models.find(item => item.provider === currentAgent()?.provider && item.model === currentAgent()?.model);
   if (!chosen || chosen.provider !== provider) return;
   closeSettingsAnimated();
@@ -1017,8 +1054,8 @@ oauthCancelEl.addEventListener('click', async () => {
   } catch (error) { settingsError.textContent = error.message; }
 });
 
-document.getElementById('welcome-chatgpt').addEventListener('click', () => startOAuthFlow('openai-codex', 'browser'));
-document.getElementById('welcome-custom').addEventListener('click', () => showSettingsTab('models', true));
+document.getElementById('connect-browser').addEventListener('click', () => startOAuthFlow(fieldValue(providerEl), 'browser'));
+document.getElementById('connect-device').addEventListener('click', () => startOAuthFlow(fieldValue(providerEl), 'device_code'));
 
 // First run: no model anywhere means every AI action would fail, so offer the
 // way in at once instead of waiting for the writer to hit that wall.

@@ -2279,25 +2279,6 @@ html, body {
 .settings-error { color: var(--danger); }
 .settings-hint:empty, .settings-error:empty { display: none; }
 .settings-sub { margin-top: 2px; color: var(--muted); font-size: 13px; }
-.configured-keys { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.key-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  font-size: 13px;
-}
-.key-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
-/* Not connected: the green would claim a working sign-in that is not there. */
-.key-chip i.is-off { background: var(--muted); }
-/* 24px is the WCAG 2.5.8 floor; the negative margin keeps the chip's height. */
-.key-chip button { min-width: 24px; min-height: 24px; margin-block: -4px; border: 0; padding: 0 2px; background: none; color: var(--muted); }
-@media (hover: hover) { .key-chip button:hover { background: none; color: var(--text); } }
-/* Armed: the second press removes the key, so it looks like the danger it is. */
-.key-chip button.is-armed,
-.key-chip button.is-armed:hover { padding: 0 8px; border-radius: var(--r-pill); background: var(--danger); color: var(--overlay); font-size: 12px; }
 
 @media (max-width: 640px) {
   .settings-grid, .key-entry { grid-template-columns: 1fr; }
@@ -2326,26 +2307,23 @@ html, body {
 .settings-dialog .settings-tabs button[aria-selected="true"] { background: var(--surface-2); color: var(--text); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
 .settings-dialog .settings-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .settings-panel { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-#settings-dialog[data-tab="models"] section[data-tab]:not([data-tab~="models"]),
-#settings-dialog[data-tab="access"] section[data-tab]:not([data-tab~="access"]),
-#settings-dialog[data-tab="general"] section[data-tab]:not([data-tab~="general"]),
-#settings-dialog[data-tab="welcome"] section[data-tab]:not([data-tab~="welcome"]) { display: none; }
-/* The welcome is the dialog's first-run mode: no tabs, one primary action. */
-#settings-dialog[data-tab="welcome"] { width: min(520px, calc(100vw - 32px)); height: fit-content; }
-#settings-dialog[data-tab="welcome"] form { height: auto; }
-#settings-dialog[data-tab="welcome"] .settings-layout { flex: none; }
-#settings-dialog[data-tab="welcome"] .settings-layout { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-#settings-dialog[data-tab="welcome"] .settings-tabs,
-#settings-dialog[data-tab="welcome"] .settings-sub { display: none; }
-.settings-dialog .welcome { display: flex; flex-direction: column; align-items: flex-start; border-bottom: 0; }
-.settings-dialog .welcome-primary { background: var(--text); color: var(--bg); font-weight: 600; padding: 0 28px; }
-@media (hover: hover) { .settings-dialog .welcome-primary:hover { background: color-mix(in srgb, var(--text) 85%, var(--bg)); } }
-.settings-dialog .welcome-custom { margin-top: 20px; background: none; padding: 0; min-height: 32px; color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; }
-@media (hover: hover) { .settings-dialog .welcome-custom:hover { background: none; color: var(--text); } }
+#settings-dialog[data-tab="models"] section[data-tab]:not([data-tab="models"]),
+#settings-dialog[data-tab="general"] section[data-tab]:not([data-tab="general"]) { display: none; }
+/* Provider first, then how to connect it or, once connected, which model. */
+.settings-dialog .settings-field[hidden], .connect-row [hidden] { display: none; }
+.connect-row { margin-top: 14px; }
+.connect-signin { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.settings-dialog .connect-primary { background: var(--text); color: var(--bg); font-weight: 600; padding: 0 28px; }
+@media (hover: hover) { .settings-dialog .connect-primary:hover { background: color-mix(in srgb, var(--text) 85%, var(--bg)); } }
+#connect-key { grid-template-columns: 1fr auto; }
+#oauth-flow { margin-top: 10px; }
+.settings-dialog .connection-line button, .settings-dialog .connected-list button {
+  min-height: 24px; padding: 0 2px; border: 0; background: none; color: var(--text-2); font-size: 13px;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+@media (hover: hover) { .settings-dialog .connection-line button:hover, .settings-dialog .connected-list button:hover { background: none; color: var(--text); } }
+.settings-dialog .connection-line button.is-armed { padding: 0 8px; border-radius: var(--r-pill); background: var(--danger); color: var(--overlay); text-decoration: none; }
 #settings-dialog section.tab-end { border-bottom: 0; }
-/* Idle sign-in: no empty section, and the one above it closes the tab. */
-#settings-dialog section:has(> #oauth-flow[hidden]) { display: none; }
-#settings-dialog section:has(+ section > #oauth-flow[hidden]) { border-bottom: 0; }
 @media (max-width: 640px) {
   .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .settings-tabs { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border-subtle); padding: 8px 12px; }
