@@ -25,9 +25,7 @@ export function generateIn(context) {
   const late = name => (...args) => context[name](...args);
   const feature = generate.createGenerate({
     jobs: context.jobs,
-    documentKey: () => context.documentKey,
-    loading: () => context.loadingDocument,
-    paused: () => context.loadingDocument || context.savePaused,
+    docState: context,
     passageFx: () => context.setPassageFx ?? null,
     fetch: late('fetch'),
     ...Object.fromEntries(['cancelSuggestion', 'closePassage', 'combinedContext', 'currentAgent', 'ensureAgent',
@@ -43,9 +41,7 @@ export function passageIn(context) {
   const late = name => (...args) => context[name](...args);
   const feature = passage.createPassage({
     jobs: context.jobs,
-    documentKey: () => context.documentKey,
-    loading: () => context.loadingDocument,
-    paused: () => context.loadingDocument || context.savePaused,
+    docState: context,
     fetch: late('fetch'),
     ...Object.fromEntries(['cancelSuggestion', 'combinedContext', 'currentAgent', 'ensureAgent', 'startJob', 'finishJob',
       'notify', 'notifyProblem'].map(name => [name, late(name)])),

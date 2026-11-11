@@ -11,8 +11,8 @@ const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
   import { createEditorTheme } from './src/editor/theme.js';
   import { createGenerate } from './src/features/generate.js';
   const editorTheme = createEditorTheme(false);
-  const { GenerationWidget } = createGenerate({ jobs: new Set(), documentKey: () => 'fixture', loading: () => false,
-    paused: () => false, passageFx: () => null, saveSnapshot() {}, notify() {},
+  const { GenerationWidget } = createGenerate({ jobs: new Set(), docState: { documentKey: 'fixture' },
+    passageFx: () => null, saveSnapshot() {}, notify() {},
     cancelSuggestion() {}, closePassage() {}, combinedContext: () => '', currentAgent: () => ({}), ensureAgent: async () => true, startJob: () => new AbortController(), finishJob() {}, notifyProblem() {}, requestPassage() {}, sseChunks() {} });
   window.show = (value) => {
     window.view?.destroy();

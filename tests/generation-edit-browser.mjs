@@ -9,8 +9,8 @@ const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
   import { history, defaultKeymap, historyKeymap } from '@codemirror/commands';
   import { createGenerate, generationField, setGenerationFx } from './src/features/generate.js';
   const documentKey = 'fixture';
-  const { GenerationWidget, generationInput } = createGenerate({ jobs: new Set(), documentKey: () => documentKey,
-    loading: () => false, paused: () => false, passageFx: () => null, saveSnapshot() {}, notify() {},
+  const { GenerationWidget, generationInput } = createGenerate({ jobs: new Set(), docState: { documentKey },
+    passageFx: () => null, saveSnapshot() {}, notify() {},
     cancelSuggestion() {}, closePassage() {}, combinedContext: () => '', currentAgent: () => ({}), ensureAgent: async () => true, startJob: () => new AbortController(), finishJob() {}, notifyProblem() {}, requestPassage() {}, sseChunks() {} });
   window.show = inline => {
     window.view?.destroy();

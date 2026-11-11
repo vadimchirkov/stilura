@@ -782,7 +782,7 @@ const { refreshUpdate } = createUpdateCheck({ storage: localStorage, checkbox: u
 let suggestWorking = '';   // "Suggesting…" while a request is out
 const { cancelSuggestion, suggestSchedule, suggestionUpdate, suggestFetch, pending: suggestPending } = createSuggest({
   getView: () => workView,
-  paused: () => docState.loadingDocument || docState.savePaused,
+  docState,
   generating: () => !!generate.job(),
   statusShown: () => !!suggestWorking,
   setSuggestStatus: (...args) => setSuggestStatus(...args),
@@ -799,9 +799,7 @@ const { cancelSuggestion, suggestSchedule, suggestionUpdate, suggestFetch, pendi
 // ─── Generate in the draft ─── (src/features/generate.js)
 const generate = createGenerate({
   jobs,
-  documentKey: () => docState.documentKey,
-  loading: () => docState.loadingDocument,
-  paused: () => docState.loadingDocument || docState.savePaused,
+  docState,
   passageFx: () => setPassageFx,
   // Callbacks, not references: several are declared further down main().
   cancelSuggestion: () => cancelSuggestion(),
@@ -831,9 +829,7 @@ function editorSetReadonly(view, on) {
 // ─── Local passage actions ─── (src/features/passage.js)
 const passage = createPassage({
   jobs,
-  documentKey: () => docState.documentKey,
-  loading: () => docState.loadingDocument,
-  paused: () => docState.loadingDocument || docState.savePaused,
+  docState,
   cancelSuggestion: () => cancelSuggestion(),
   combinedContext: () => combinedContext(),
   currentAgent: () => currentAgent(),

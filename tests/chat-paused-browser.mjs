@@ -64,7 +64,7 @@ try {
     const jobs = new Set();
     const error402 = '402 {"type":"error","error":{"type":"api_error","message":"Upstream request failed: Insufficient account funds"}}';
     const { generateFromLine } = createGenerate({
-      jobs, documentKey: () => 'test', loading: () => false, paused: () => false, passageFx: () => null,
+      jobs, docState: { documentKey: 'test' }, passageFx: () => null,
       startJob: () => { const job = new AbortController(); jobs.add(job); return job; },
       finishJob: job => jobs.delete(job), ensureAgent: async () => true, cancelSuggestion() {},
       currentAgent: () => ({}), combinedContext: () => '', notify, notifyProblem,

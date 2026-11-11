@@ -141,7 +141,7 @@ function harness(text = 'A sufficiently long draft') {
   // swap one (the agent, ensureAgent, the brief) after the harness is built.
   Object.assign(context, createSuggest({
     getView: () => view,
-    paused: () => context.loadingDocument || context.savePaused,
+    docState: context,
     generating: () => !!context.job(),
     statusShown: () => false,
     hidden: () => context.document.hidden,

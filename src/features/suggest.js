@@ -17,12 +17,14 @@ export function atParagraphEnd(state) {
 }
 
 export function createSuggest({
-  getView, paused, generating, statusShown, setSuggestStatus, slashRequest, ensureAgent,
+  getView, docState, generating, statusShown, setSuggestStatus, slashRequest, ensureAgent,
   activeSuggestAgent, currentAgent, briefContext, startJob, finishJob, reportSuggestFailure,
   hidden = () => document.hidden,
   fetch = (...args) => globalThis.fetch(...args),
   timers = globalThis,
 }) {
+  // The draft cannot be saved: it is loading, or saving is paused.
+  const paused = () => docState.loadingDocument || docState.savePaused;
   let suggestTimer = null;
   let suggestAbort = null;
   let suggestVersion = 0;

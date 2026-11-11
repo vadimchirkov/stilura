@@ -55,11 +55,13 @@ export const requestField = StateField.define({
 
 
 export function createGenerate({
-  jobs, documentKey, loading, paused, passageFx, cancelSuggestion, closePassage, combinedContext,
+  jobs, docState, passageFx, cancelSuggestion, closePassage, combinedContext,
   currentAgent, ensureAgent, startJob, finishJob, notify, notifyProblem, requestPassage, saveSnapshot,
   sseChunks, fetch = (...args) => globalThis.fetch(...args),
 }) {
   let generationJob = null;
+  // The draft cannot be saved: it is loading, or saving is paused.
+  const paused = () => docState.loadingDocument || docState.savePaused;
   class GenerationWidget extends WidgetType {
     constructor(value) { super(); this.value = value; }
     eq(other) { return this.value.job === other.value.job && this.value.text === other.value.text && this.value.phase === other.value.phase && this.value.inline === other.value.inline && this.value.previousText === other.value.previousText; }
@@ -168,7 +170,7 @@ export function createGenerate({
 
   function reviewGeneration(view, action, job) {
     const target = view.state.field(generationField);
-    if (!target || target.job !== job || target.phase !== 'review' || target.key !== documentKey()) return;
+    if (!target || target.job !== job || target.phase !== 'review' || target.key !== docState.documentKey) return;
     if (action === 'Reject') {
       if (target.source === 'passage') { closePassage(view); return; }
       view.dispatch({ effects: [setGenerationFx.of(null), EditorView.announce.of('Suggestion rejected. Your request is unchanged.')] });
@@ -189,7 +191,7 @@ export function createGenerate({
   }
 
   async function generateFromLine(view, line, instruction) {
-    const document = view.state.doc.toString(), key = documentKey();
+    const document = view.state.doc.toString(), key = docState.documentKey;
     const inline = line.from > view.state.doc.lineAt(line.from).from;
     const previous = view.state.field(generationField);
     const previousText = previous?.phase === 'review' ? previous.text : null;
@@ -199,12 +201,12 @@ export function createGenerate({
     view.dispatch({ effects: [clearGhostFx.of(null), setGenerationFx.of({ from: line.from, to: line.to, quote: line.text, text: previousText ?? '', previousText, instruction, key, inline, phase: 'streaming', job }),
       EditorView.announce.of('Generating text. Escape stops generation.')] });
     // The preview stays outside the saved draft until the author accepts it.
-    const current = () => !job.signal.aborted && documentKey() === key && !paused()
+    const current = () => !job.signal.aborted && docState.documentKey === key && !paused()
       && !view.state.readOnly && view.state.field(generationField)?.job === job;
     const clear = () => {
       const target = view.state.field(generationField);
       if (target?.job !== job || target.phase !== 'streaming') return;
-      const restored = previousText !== null && documentKey() === key && !loading()
+      const restored = previousText !== null && docState.documentKey === key && !docState.loadingDocument
         ? { ...target, text: previousText, previousText: null, phase: 'review' } : null;
       view.dispatch({ effects: [setGenerationFx.of(restored), EditorView.announce.of(restored
         ? 'Previous suggestion restored. Tab accepts, Escape dismisses, R regenerates.'

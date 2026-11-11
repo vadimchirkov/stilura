@@ -15,10 +15,12 @@ import { generationField, setGenerationFx } from './generate.js';
 export const setPassageFx = StateEffect.define();
 
 export function createPassage({
-  jobs, documentKey, loading, paused, cancelSuggestion, combinedContext, currentAgent, ensureAgent,
+  jobs, docState, cancelSuggestion, combinedContext, currentAgent, ensureAgent,
   startJob, finishJob, notify, notifyProblem, fetch = (...args) => globalThis.fetch(...args),
 }) {
   let passageJob = null;
+  // The draft cannot be saved: it is loading, or saving is paused.
+  const paused = () => docState.loadingDocument || docState.savePaused;
   const passageField = StateField.define({
     create: () => null,
     update(value, tr) {
@@ -40,14 +42,14 @@ export function createPassage({
   });
 
   function openPassage(view, range) {
-    if (!range || range.to <= range.from || loading() || view.state.readOnly) return false;
+    if (!range || range.to <= range.from || docState.loadingDocument || view.state.readOnly) return false;
     if (view.state.field(generationField)?.source !== 'passage' && view.state.field(generationField)) {
       notify('Accept or dismiss the current suggestion first.'); return false;
     }
     closePassage(view);
     cancelSuggestion(); ghostClear(view);
     view.dispatch({ effects: setPassageFx.of({ from: range.from, to: range.to,
-      quote: view.state.doc.sliceString(range.from, range.to), key: documentKey(),
+      quote: view.state.doc.sliceString(range.from, range.to), key: docState.documentKey,
       instruction: '', answer: '', busy: false }), selection: { anchor: range.to } });
     return true;
   }
@@ -95,14 +97,14 @@ export function createPassage({
 
   async function requestPassage(view, previous = null) {
     let target = view.state.field(passageField);
-    if (!target || paused() || view.state.readOnly || target.key !== documentKey()) return;
+    if (!target || paused() || view.state.readOnly || target.key !== docState.documentKey) return;
     if (!target.instruction.trim()) return;
     if ([...jobs].some(job => !job.background)) { notify('Wait for the current request or stop it first.'); return; }
     const job = startJob(); passageJob = job;
     view.dispatch({ effects: setPassageFx.of({ ...target, busy: true, job, answer: '' }) });
     view.focus();
     const current = () => !job.signal.aborted && !paused() && !view.state.readOnly
-      && view.state.field(passageField)?.job === job && documentKey() === target.key;
+      && view.state.field(passageField)?.job === job && docState.documentKey === target.key;
     try {
       if (!await ensureAgent() || !current()) return;
       target = view.state.field(passageField);
