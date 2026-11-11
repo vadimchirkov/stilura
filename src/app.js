@@ -35,6 +35,9 @@ import { searchKeymap } from '@codemirror/search';
 import { hydrateIcons, icon } from './icons.js';
 import { openStorage } from './storage.js';
 import { liveDocument } from './live.js';
+import { markdownField } from './editor/markdown.js';
+import { combobox, setOptions, fieldValue } from './combobox.js';
+import { createEditorTheme } from './editor/theme.js';
 import { BRIEF_STEPS, validateBriefQuestions, validateBriefUpdate } from '../brief.js';
 
 async function main() {
@@ -398,161 +401,8 @@ function saveAgentSelection() {
 // Continuations share the editor's model; the server minimizes reasoning.
 function activeSuggestAgent() { return currentAgent(); }
 
-// ── Combobox ──
-//
-//  Six hundred models do not fit a <select>, and a native datalist cannot
-//  stand in: its popup never reaches the top layer above a modal dialog, and a
-//  field that already holds an answer filters the writer's typing against it.
-//  So: a trigger that names the choice, and a popover with a search box and a
-//  list. The popover API still does the top layer, light dismiss and Escape.
-const combos = new WeakMap();
-// Hundreds of rows are never all needed: the writer types to narrow, and the
-// first screenful plus a count is enough to show the filter is working.
-const COMBO_LIMIT = 50;
-
-function combobox(trigger) {
-  const popover = document.getElementById(trigger.getAttribute('popovertarget'));
-  const search = popover.querySelector('.combo-search');
-  const list = popover.querySelector('.combo-list');
-  const empty = popover.querySelector('.combo-empty');
-  const count = popover.querySelector('.combo-count');
-  const state = { options: [], value: '', render, trigger };
-  combos.set(trigger, state);
-  // Wire the listbox pattern: the search owns the popup and names the active
-  // row, so a screen reader follows ArrowUp/Down/Home/End as well as typing.
-  const listId = `${popover.id}-list`;
-  list.id = listId;
-  search.setAttribute('role', 'combobox');
-  search.setAttribute('aria-controls', listId);
-  search.setAttribute('aria-expanded', 'false');
-
-  function setActive(item) {
-    for (const child of list.children) child.classList.remove('is-active');
-    if (item) {
-      item.classList.add('is-active');
-      item.scrollIntoView({ block: 'nearest' });
-      search.setAttribute('aria-activedescendant', item.id);
-    } else {
-      search.removeAttribute('aria-activedescendant');
-    }
-  }
-
-  function render() {
-    const query = search.value.trim().toLowerCase();
-    const matched = state.options.filter(option => !query
-      || option.label.toLowerCase().includes(query)
-      || option.value.toLowerCase().includes(query));
-    const shown = matched.slice(0, COMBO_LIMIT);
-    list.replaceChildren(...shown.map((option, index) => {
-      const item = chatEl('button', 'combo-item', '');
-      item.type = 'button';
-      item.id = `${listId}-${index}`;
-      item.dataset.value = option.value;
-      item.setAttribute('role', 'option');
-      item.setAttribute('aria-selected', String(option.value === state.value));
-      item.append(chatEl('span', '', option.label));
-      return item;
-    }));
-    empty.hidden = matched.length > 0;
-    search.removeAttribute('aria-activedescendant');  // rows were just rebuilt
-    if (count) count.textContent = !state.options.length ? ''
-      : matched.length > shown.length ? `Showing ${shown.length} of ${matched.length}` : '';
-  }
-
-  // The popover is positioned, not anchored: a scroll, resize or dialog move
-  // after opening leaves it floating where the trigger was. Re-measure while
-  // it is open so it follows the field instead.
-  function reposition(force) {
-    if (!force && !popover.matches(':popover-open')) return;
-    const box = trigger.getBoundingClientRect();
-    const width = Math.max(box.width, 260);
-    popover.style.left = `${Math.min(box.left, window.innerWidth - width - 8)}px`;
-    popover.style.top = `${box.bottom + 4}px`;
-    popover.style.width = `${width}px`;
-  }
-  state.reposition = reposition;
-
-  // beforetoggle is synchronous, before the first paint; toggle fires a task
-  // later, which is long enough to flash the popover at its default position.
-  popover.addEventListener('beforetoggle', event => {
-    if (event.newState === 'open') reposition(true);
-  });
-  popover.addEventListener('toggle', event => {
-    search.setAttribute('aria-expanded', String(event.newState === 'open'));
-    if (event.newState !== 'open') { search.removeAttribute('aria-activedescendant'); return; }
-    search.value = '';   // the search starts empty, never at the current answer
-    render();
-    // Open where the writer already is: the current choice, not the top of a
-    // list of six hundred. Enter with nothing typed then changes nothing.
-    const current = list.querySelector('[aria-selected="true"]');
-    setActive(current);
-    current?.scrollIntoView({ block: 'center' });
-    search.focus();
-  });
-  search.addEventListener('input', render);
-  search.addEventListener('keydown', event => {
-    const items = [...list.children];
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      (list.querySelector('.is-active') ?? items[0])?.click();
-      return;
-    }
-    const at = items.findIndex(item => item.classList.contains('is-active'));
-    let next;
-    if (event.key === 'ArrowDown') next = items[Math.min(at + 1, items.length - 1)] ?? items[0];
-    else if (event.key === 'ArrowUp') next = items[Math.max(at - 1, 0)] ?? items[0];
-    else if (event.key === 'Home') next = items[0];
-    else if (event.key === 'End') next = items[items.length - 1];
-    else return;
-    event.preventDefault();
-    setActive(next ?? null);
-  });
-  list.addEventListener('click', event => {
-    const item = event.target.closest('[data-value]');
-    if (!item) return;
-    state.value = item.dataset.value;
-    popover.hidePopover();
-    trigger.dispatchEvent(new Event('change', { bubbles: true }));
-  });
-}
-
 combobox(providerEl);
 combobox(modelEl);
-
-// One open popover at most follows its field; closed ones cost nothing.
-for (const event of ['resize', 'scroll']) {
-  window.addEventListener(event, () => {
-    for (const popover of document.querySelectorAll('.combo:popover-open')) {
-      const trigger = document.querySelector(`[popovertarget="${popover.id}"]`);
-      combos.get(trigger)?.reposition?.();
-    }
-  }, { passive: true, capture: true });
-}
-
-function setOptions(field, options, value) {
-  const combo = combos.get(field);
-  const chosen = options.find(option => option.value === value) ?? options[0];
-  field.disabled = !options.length;
-  if (!combo) {
-    field.replaceChildren(...options.map(({ value: optionValue, label }) => {
-      const option = document.createElement('option');
-      option.value = optionValue;
-      option.textContent = label;
-      return option;
-    }));
-    field.value = chosen?.value ?? '';
-    return;
-  }
-  combo.options = options;
-  combo.value = chosen?.value ?? '';
-  field.querySelector('.combo-value').textContent = chosen?.label ?? 'None available';
-  combo.render();
-}
-
-function fieldValue(field) {
-  const combo = combos.get(field);
-  return combo ? combo.value : field.value;
-}
 
 // Every provider the writer can reach, connected or not, in one list: the
 // ones with models (connected), the ones that take an API key, and the
@@ -3617,75 +3467,6 @@ document.addEventListener('keydown', event => {
 
 const isDark = currentTheme === 'dark';
 
-// ── Markdown, minimal ────────────────────────────────────────────────────────
-//  The text stays plain: every marker remains in the draft, dimmed, and what
-//  it marks is styled in place — headings, bold, italic, `code`, links, quotes,
-//  list markers, rules. Nothing is replaced or hidden; a widget would put the
-//  caret and the notes' character offsets out of step with what is typed.
-//  Fences and `inline code` are left unparsed. Rebuilt per edit over the whole
-//  draft — a regex pass, cheap at prose length.
-// ponytail: whole-draft rescan per keystroke, visible-range only if a draft ever outgrows it.
-const MD_INLINE = new RegExp([
-  '(?<code>`[^`\\n]+`)',
-  '\\*\\*\\*(?=\\S)(?<both>.+?)(?<=\\S)\\*\\*\\*',
-  '\\*\\*(?=\\S)(?<bold>.+?)(?<=\\S)\\*\\*',
-  '(?<![*\\w])\\*(?=[^\\s*])(?<em>.+?)(?<=[^\\s*])\\*(?![*\\w])',
-  '(?<![\\w_])_(?=[^\\s_])(?<un>.+?)(?<=[^\\s_])_(?![\\w_])',
-  '\\[(?<link>[^\\]\\n]+)\\](?<url>\\([^)\\s]+(?:\\s+"[^"\\n]*")?\\))',
-].join('|'), 'g');
-const mdMark = Decoration.mark({ class: 'cm-md-mark' });
-const mdBold = Decoration.mark({ class: 'cm-md-b' });
-const mdItalic = Decoration.mark({ class: 'cm-md-i' });
-const mdBoldItalic = Decoration.mark({ class: 'cm-md-b cm-md-i' });
-const mdCode = Decoration.mark({ class: 'cm-md-code' });
-const mdLink = Decoration.mark({ class: 'cm-md-link' });
-const mdHeading = Decoration.line({ class: 'cm-md-h' });
-const mdQuote = Decoration.line({ class: 'cm-md-quote' });
-const mdRule = Decoration.line({ class: 'cm-md-rule' });
-const MD_RULE = /^\s*([-*_])(\s*\1){2,}\s*$/;
-const MD_LIST = /^\s*([-*+]|\d+[.)])(?=\s)/;
-
-function markdownDecorations(doc) {
-  const ranges = [];
-  let fence = false;
-  for (let n = 1; n <= doc.lines; n++) {
-    const line = doc.line(n);
-    const text = line.text;
-    if (/^\s*(```|~~~)/.test(text)) { fence = !fence; continue; }
-    if (fence) continue;
-    if (MD_RULE.test(text)) { ranges.push(mdRule.range(line.from)); continue; }
-    const heading = /^(#{1,6})(?=\s)/.exec(text);
-    if (heading) {
-      ranges.push(mdHeading.range(line.from), mdMark.range(line.from, line.from + heading[1].length));
-    } else if (text.startsWith('>')) {
-      ranges.push(mdQuote.range(line.from), mdMark.range(line.from, line.from + 1));
-    } else {
-      const list = MD_LIST.exec(text);
-      if (list) ranges.push(mdMark.range(line.from + list[0].length - list[1].length, line.from + list[0].length));
-    }
-    for (const m of text.matchAll(MD_INLINE)) {
-      const g = m.groups;
-      const from = line.from + m.index, to = from + m[0].length;
-      if (g.link !== undefined) {
-        const open = from + 1, close = open + g.link.length;
-        ranges.push(mdMark.range(from, open), mdLink.range(open, close), mdMark.range(close, to));
-        continue;
-      }
-      const [width, deco] = g.code !== undefined ? [1, mdCode]
-        : g.both !== undefined ? [3, mdBoldItalic]
-        : g.bold !== undefined ? [2, mdBold]
-        : [1, mdItalic];
-      ranges.push(deco.range(from + width, to - width), mdMark.range(from, from + width), mdMark.range(to - width, to));
-    }
-  }
-  return Decoration.set(ranges, true);
-}
-
-const markdownField = StateField.define({
-  create: state => markdownDecorations(state.doc),
-  update: (decorations, tr) => tr.docChanged ? markdownDecorations(tr.state.doc) : decorations,
-});
-
 // One visible highlight per character. Tracking fields keep all anchors intact.
 function textHighlights(state) {
   const generation = state.field(generationField);
@@ -3740,89 +3521,7 @@ const textHighlightLayer = EditorView.decorations.compute([
   flashField, passageField, requestField, generationField, variantPlainField, 'selection',
 ], textHighlights);
 
-const editorTheme = EditorView.theme({
-  // Root element — fills the #editor-wrapper flex container
-  '&': {
-    height:     '100%',
-    background: 'var(--surface)',
-  },
-
-  // Remove the focus ring CM6 adds by default
-  '&.cm-focused': {
-    outline: 'none',
-  },
-
-  // Scrollable area — inherits the writing font
-  '.cm-scroller': {
-    fontFamily: 'var(--font)',
-    fontSize:   '17px',
-    lineHeight: '1.75',
-    overflowY:  'auto',
-    // Reserve scrollbar space without a left gutter, which offsets CM's cursor layer.
-    scrollbarGutter: 'stable',
-  },
-
-  // Editable content area — generous padding, centred like the old textarea
-  '.cm-content': {
-    // The measure is set in characters, so it holds if the size changes. It
-    // gives way before the notes do: between 52ch and 68ch the column shrinks
-    // so the margin keeps room for the rail (RAIL_WIDTH + RAIL_GUTTER a side).
-    // Only below 52ch do notes fall back to the chat stream.
-    padding:    '28px max(32px, calc((100% - clamp(52ch, 100% - 2 * 244px, 68ch)) / 2))',
-    caretColor: 'var(--accent)',
-    color:      'var(--text)',
-    minHeight:  '100%',
-  },
-
-  // Each line — no extra horizontal padding (already on .cm-content)
-  '.cm-line': { padding: '0' },
-
-  // Cursor
-  '.cm-cursor, .cm-dropCursor': {
-    borderLeftColor: 'var(--accent)',
-    borderLeftWidth: '1.5px',
-  },
-
-  // Selection highlight
-  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
-    background: 'var(--attached-tint) !important',
-  },
-
-  // ── Suggestion ─────────────────────────────────────────────────────────────
-  //
-  //  Continuation text after the caret, same face as the draft but fainter.
-  //  Nothing is added to the document until Tab; accepted text is plain
-  //  document text, so it simply loses this class. Escape dismisses.
-  //
-  '.cm-suggest': {
-    opacity:       '0.45',
-    pointerEvents: 'none',
-    userSelect:    'none',
-  },
-
-  // Working ranges share one blue wash; no outsets that touch adjacent lines.
-  '.cm-attached': {
-    background: 'var(--attached-tint)',
-    borderRadius: '2px',
-    boxDecorationBreak: 'clone',
-  },
-  '.cm-note': {
-    textDecoration: 'underline dotted var(--muted)',
-    textUnderlineOffset: '4px',
-    cursor: 'pointer',
-  },
-  '.cm-note.is-drifted': { textDecorationStyle: 'dashed' },
-
-  // Slightly dim the content while the document is loading.
-  '&.streaming .cm-content': { opacity: '0.8' },
-
-  '.cm-generation': { whiteSpace: 'break-spaces' },
-
-  '.cm-generation-request': { background: 'var(--attached-tint)', borderRadius: '2px' },
-
-  // Hide gutters and fold markers — this is a prose editor
-  '.cm-gutters': { display: 'none' },
-}, { dark: isDark });
+const editorTheme = createEditorTheme(isDark);
 
 // ─── Editor setup ──────────────────────────────────────────────────────────────
 

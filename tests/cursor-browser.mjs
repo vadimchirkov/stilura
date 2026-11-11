@@ -7,14 +7,13 @@ const puppeteer = loadPuppeteer();
 
 // Exercise the actual widgets and theme with CodeMirror's cursor measurement.
 const widget = appSection('class GenerationWidget', 'const generationField');
-const theme = appSection('const editorTheme =', '// ─── Editor setup');
 const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
   import { createGenerationLoader } from './extension/editor-ui.js';
   import { EditorState } from '@codemirror/state';
   import { EditorView, WidgetType, Decoration, drawSelection } from '@codemirror/view';
-  const isDark = false;
+  import { createEditorTheme } from './src/editor/theme.js';
+  const editorTheme = createEditorTheme(false);
   ${widget}
-  ${theme}
   window.show = (value) => {
     window.view?.destroy();
     const doc = value.inline ? 'Opening /request' : '/request';

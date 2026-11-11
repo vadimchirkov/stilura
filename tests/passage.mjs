@@ -127,7 +127,7 @@ assert.equal(noModel.jobs.size, 0);
 console.log('Passage checks passed: local questions, synonyms, mapped replacements, regeneration, stale guards and Undo.');
 
 const modelScope = vm.createContext({ currentAgent: () => ({ provider: 'shared', model: 'one' }) });
-vm.runInContext(appSection('function activeSuggestAgent()', '// ── Combobox'), modelScope);
+vm.runInContext(appSection('function activeSuggestAgent()', 'combobox(providerEl);'), modelScope);
 assert.equal(modelScope.activeSuggestAgent().model, 'one');
 const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 assert(!html.includes('id="suggest-model"'));
