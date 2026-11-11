@@ -6,6 +6,7 @@ import { EditorView, Decoration, WidgetType } from '@codemirror/view';
 import { cursorWindow, parseSuggestion, suggestionPrompts, requestSuggestion } from '../suggestions.js';
 import { insertionText, trimOverlap } from '../review.js';
 import { appSection } from './app-source.mjs';
+import * as ghost from '../src/editor/ghost.js';
 
 const raw = (text, continuesWord = false) => text ? `${continuesWord ? 'WORD' : 'TEXT'}: ${text}` : 'NONE';
 for (const [before, text, word, after] of [
@@ -132,8 +133,8 @@ function harness(text = 'A sufficiently long draft') {
       suggestStatus.textContent = message; suggestStatus.dataset.from = message ? from : ''; statuses.push(message);
     },
     modelError: error => ({ say: error.message }), saidInStream: () => false,
+    ...ghost,
   });
-  vm.runInContext(appSection('class GhostWidget', '// ─── Spelling marks'), context);
   vm.runInContext(appSection('let suggestTimer =', '// ─── Read-only compartment'), context);
   const ghostField = vm.runInContext('ghostField', context);
   view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [ghostField] });
