@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { reviewAction, rewriteInstruction } from '../extension/writing-rules.js';
+import { reviewAction, rewriteInstruction, slashCommand } from '../extension/writing-rules.js';
 
 for (const [event, count, expected] of [
   [{ key: 'Tab' }, 1, 'Accept'],
@@ -24,3 +24,21 @@ assert.equal(rewriteInstruction('Shorten it.'), 'Shorten it.');
 assert.match(rewriteInstruction('Shorten it.', 'Old text.'), /^Shorten it\.\nReplace the previous candidate/);
 assert(rewriteInstruction('Shorten it.', 'Old text.').endsWith('Old text.'));
 console.log('Shared editor rules passed: review keys, native navigation, IME and regeneration instructions.');
+
+// The command is the slash being typed, not an earlier slash on the line.
+for (const [line, from, instruction] of [
+  ['/write a haiku', 0, 'write a haiku'],
+  ['/ write a haiku', 0, 'write a haiku'],
+  ['Ratio 1 / 2 is fine. /write a haiku', 21, 'write a haiku'],
+  ['Ratio 1 / 2 is fine. /', 21, ''],
+  ['Pick one and / or the other /summarize', 28, 'summarize'],
+  ['/compare A / B', 0, 'compare A / B'],
+  ['Intro /compare A / B', 6, 'compare A / B'],
+  ['Existing text. /Explain /usr/bin', 15, 'Explain /usr/bin'],
+]) {
+  const command = slashCommand(line);
+  assert.equal(command?.from, from, line);
+  assert.equal(command.instruction, instruction, line);
+  assert.equal(command.text, line.slice(from), line);
+}
+assert.equal(slashCommand('See https://example.com and/or // note'), null);

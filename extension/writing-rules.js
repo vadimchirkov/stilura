@@ -26,12 +26,18 @@ export function paragraphEnd(text, cursor) {
   return cursor === text.length || !text.slice(cursor + 1, next < 0 ? text.length : next).trim();
 }
 
+// A command is a slash at the start of the line or after a space, running to
+// the end of the line. Prose may hold a lone slash first ("1 / 2", "and /
+// or"), so the command starts at the first slash with a word right after it
+// ("/write"); paths and slashes inside the request ("/explain /usr/bin",
+// "/compare A / B") stay part of it. With no such slash, the last one is the
+// command: a bare "/" just typed, or "/ request" written with a space.
 export function slashCommand(line, offset = 0) {
-  const match = /(?:^|\s)\/(?!\/)(.*)$/u.exec(line);
-  if (!match) return null;
-  const start = match.index + match[0].indexOf('/');
+  const starts = [...line.matchAll(/(?:^|\s)\/(?!\/)/gu)].map(match => match.index + match[0].length - 1);
+  if (!starts.length) return null;
+  const start = starts.find(at => /\S/u.test(line[at + 1] ?? '')) ?? starts.at(-1);
   return { from: offset + start, to: offset + line.length, text: line.slice(start),
-    instruction: match[1].trim(), inline: !!line.slice(0, start).trim() };
+    instruction: line.slice(start + 1).trim(), inline: !!line.slice(0, start).trim() };
 }
 
 export function ghostRemainder(text, typed) {
