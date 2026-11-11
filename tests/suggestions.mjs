@@ -7,6 +7,7 @@ import { cursorWindow, parseSuggestion, suggestionPrompts, requestSuggestion } f
 import { insertionText, trimOverlap } from '../review.js';
 import { appSection } from './app-source.mjs';
 import * as ghost from '../src/editor/ghost.js';
+import { createSuggest, atParagraphEnd } from '../src/features/suggest.js';
 
 const raw = (text, continuesWord = false) => text ? `${continuesWord ? 'WORD' : 'TEXT'}: ${text}` : 'NONE';
 for (const [before, text, word, after] of [
@@ -135,7 +136,20 @@ function harness(text = 'A sufficiently long draft') {
     modelError: error => ({ say: error.message }), saidInStream: () => false,
     ...ghost,
   });
-  vm.runInContext(appSection('let suggestTimer =', '// ─── Read-only compartment'), context);
+  vm.runInContext(appSection('let generationJob = null;', '// ─── Read-only compartment'), context);
+  // Every dependency is read through the context at call time, so a test can
+  // swap one (the agent, ensureAgent, the brief) after the harness is built.
+  Object.assign(context, createSuggest({
+    getView: () => view,
+    paused: () => context.loadingDocument || context.savePaused,
+    generating: () => !!vm.runInContext('generationJob', context),
+    statusShown: () => false,
+    hidden: () => context.document.hidden,
+    timers: { setTimeout: (...args) => context.setTimeout(...args), clearTimeout: (...args) => context.clearTimeout(...args) },
+    fetch: (...args) => context.fetch(...args),
+    ...Object.fromEntries(['setSuggestStatus', 'slashRequest', 'ensureAgent', 'activeSuggestAgent', 'currentAgent',
+      'briefContext', 'startJob', 'finishJob', 'reportSuggestFailure'].map(name => [name, (...args) => context[name](...args)])),
+  }), { atParagraphEnd });
   const ghostField = vm.runInContext('ghostField', context);
   view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [ghostField] });
   view.dispatch = spec => {
