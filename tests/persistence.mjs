@@ -9,7 +9,7 @@ import { EditorState, Compartment, Transaction } from '@codemirror/state';
 import { history, undo } from '@codemirror/commands';
 import { openStorage } from '../src/storage.js';
 import { resolveDrift, unwrapProse } from '../editing.js';
-import { appSection } from './app-source.mjs';
+import { appSection, docContext } from './app-source.mjs';
 
 const section = appSection;
 
@@ -18,7 +18,7 @@ const section = appSection;
   const historyComp = new Compartment();
   const workView = { state: EditorState.create({ doc: 'private A', extensions: [historyComp.of(history())] }) };
   workView.dispatch = spec => { workView.state = spec.state ?? workView.state.update(spec).state; };
-  const context = vm.createContext({ workView, historyComp, history, Transaction });
+  const context = docContext({ workView, historyComp, history, Transaction });
   vm.runInContext(section('function openDocumentText(', 'function flushSave('), context);
   context.openDocumentText('document B');
   assert.equal(undo(workView), false, 'Opening B must not leave A in undo history');
@@ -30,7 +30,7 @@ const section = appSection;
 
 {
   const entries = new Map();
-  const context = vm.createContext({
+  const context = docContext({
     positionBrief: null, briefSession: { step: 0, answers: {}, card: null },
     BRIEF_STEPS: [{ key: 'reader' }, { key: 'goal' }, { key: 'awareness' }, { key: 'scope' }],
     docStorage: { getItem: key => entries.get(key), setItem: (key, value) => entries.set(key, value), removeItem: key => entries.delete(key) },
@@ -44,7 +44,7 @@ const section = appSection;
 
 {
   let handler, exported, notified;
-  const context = vm.createContext({
+  const context = docContext({
     document: { getElementById: () => ({ addEventListener: (_, callback) => { handler = callback; } }) },
     window: {}, workView: { state: { doc: { toString: () => 'draft content' } }, focus() {} }, documentName: 'draft.md',
     exportText: (...args) => { exported = args; }, notify: text => { notified = text; }, refreshFileList() {},
@@ -61,7 +61,7 @@ const section = appSection;
 {
   const requests = [];
   let text = 'first edit';
-  const context = vm.createContext({
+  const context = docContext({
     liveSync: null, saving: false, savePromise: null, savePaused: false, loadingDocument: false, diskHold: false,
     diskText: 'old', diskRevision: 'old-revision', autosaveHold: false, documentName: 'A.md',
     workView: { state: { doc: { toString: () => text } } },
@@ -88,7 +88,7 @@ const section = appSection;
 for (const failure of ['throw', 'paused', 'conflict', 'unconfirmed', 'notes', 'backup', null]) {
   const events = [], notices = [];
   let release;
-  const context = vm.createContext({
+  const context = docContext({
     loadingDocument: false, switchingDocument: false, desktopSaving: false, desktop: true,
     documentName: 'A.md', diskText: 'old', diskTimer: null, savePaused: false, diskHold: false, autosaveHold: false,
     jobs: [], liveSync: null,
@@ -135,7 +135,7 @@ for (const mode of ['disk', 'cached', 'fast-forward', 'conflict']) {
   const current = { id: 'draft', path: '/draft.md', text: mode === 'cached' ? 'Keep\nformatting.' : 'First line\nsecond line.', revision: 'r2' };
   const cached = mode === 'disk' ? null : mode === 'cached' ? current.text : 'Unsaved local text';
   const effects = [];
-  const context = vm.createContext({
+  const context = docContext({
     current, cached, resolveDrift, unwrapProse, diskHold: false,
     workView: { state: EditorState.create({ doc: '' }) },
     docStorage: { getItem: key => key === 'wa-working' ? cached : null },
@@ -169,7 +169,7 @@ for (const mode of ['disk', 'cached', 'fast-forward', 'conflict']) {
 {
   let events, saveDone, storageDone;
   const acknowledgements = [];
-  const context = vm.createContext({
+  const context = docContext({
     desktop: true, desktopSaving: false, loadingDocument: false, switchingDocument: false,
     savePaused: false, diskHold: false, diskText: 'old', diskTimer: null,
     document: { body: { inert: false }, activeElement: { blur() {} } },

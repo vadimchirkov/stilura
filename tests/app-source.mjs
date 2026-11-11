@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import * as generate from '../src/features/generate.js';
 import * as passage from '../src/features/passage.js';
 
@@ -51,4 +52,14 @@ export function passageIn(context) {
   });
   Object.assign(context, feature, { setPassageFx: passage.setPassageFx });
   return feature;
+}
+
+// app.js keeps the document's load and save state in one object, docState.
+// In a vm harness that object is the context itself, so the names a test
+// sets on the context (loadingDocument, savePaused, documentKey, …) are the
+// ones the app code reads and writes.
+export function docContext(globals) {
+  const context = vm.createContext(globals);
+  context.docState = context;
+  return context;
 }

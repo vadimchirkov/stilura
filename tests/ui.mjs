@@ -7,7 +7,7 @@ import { resolveNoteRange, mapNoteAnchors } from '../notes.js';
 import { replacementTarget } from '../editing.js';
 import { ChangeSet, EditorState, StateEffect, StateField, RangeSet } from '@codemirror/state';
 import { Decoration, EditorView } from '@codemirror/view';
-import { appSection, appSource } from './app-source.mjs';
+import { appSection, appSource, docContext } from './app-source.mjs';
 
 // Editing a note's original occurrence must never move it onto another copy.
 {
@@ -99,7 +99,7 @@ const section = appSection;
       return change ? change.value.value : value;
     },
   })]));
-  const context = vm.createContext({ ...fields, Decoration, RangeSet, EditorView,
+  const context = docContext({ ...fields, Decoration, RangeSet, EditorView,
     GenerationWidget: class { constructor(value) { this.value = value; } }, PlainVariantWidget: class {} });
   vm.runInContext(section('function textHighlights(', 'const editorTheme ='), context);
   assert.doesNotThrow(() => EditorState.create({ doc: 'Draft', extensions: [...Object.entries(fields).filter(([name]) => name !== 'noteField').map(([, field]) => field), vm.runInContext('textHighlightLayer', context)] }), 'paused note UI does not require its optional field');
@@ -151,7 +151,7 @@ const section = appSection;
     const workView = { state: EditorState.create({ doc: 'Before OLD after.', selection: { anchor: 17 } }) };
     const controller = new AbortController(), snapshots = [];
     let saved;
-    const context = vm.createContext({
+    const context = docContext({
       document, workView, chatEl: node, chatEditCards: new Map(), chatRequests: new Set(),
       chatHistory: [{ role: 'user', content: 'Tighten this.' }], chatAbort: null, changingChatEdit: null,
       loadingDocument: false, savePaused: false, plainPreview: null, positionBrief: null, EDITS_OPEN,
@@ -252,7 +252,7 @@ const section = appSection;
   const setup = (readonly = false) => {
     const view = { state: EditorState.create({ doc: 'Before OLD after.', extensions: [EditorState.readOnly.of(readonly)] }), focus() {} };
     const snapshots = [], notices = [];
-    const context = vm.createContext({ workView: view, replacementTarget, plainPreview: null,
+    const context = docContext({ workView: view, replacementTarget, plainPreview: null,
       flashTimer: null, clearTimeout() {}, setTimeout: () => 0,
       setPlainVariantFx: StateEffect.define(), setFlashFx: StateEffect.define(),
       saveSnapshot: label => snapshots.push(label), save() {}, notify: text => notices.push(text),
@@ -295,7 +295,7 @@ const section = appSection;
   const document = { activeElement: input, getElementById: () => menu };
   const jobs = new Set();
   let briefs = 0, notice = '';
-  const context = vm.createContext({
+  const context = docContext({
     document, chatInput: input, jobs, console, chatEl: node, icon: () => '',
     chatResize() {}, clearNotice() {},
     startBrief() { briefs++; },
@@ -347,7 +347,7 @@ const section = appSection;
 {
   const cards = [0, 1].map(() => ({ style: {}, offsetHeight: 100 }));
   const scroller = { scrollHeight: 2000, scrollTop: 0, clientHeight: 700, getBoundingClientRect: () => ({ top: 0 }) };
-  const context = vm.createContext({
+  const context = docContext({
     syncRail() {}, railOn: true, rail: { children: cards, style: {} },
     railAnchors: new Map(cards.map((card, index) => [card, () => 800 + index * 20])),
     workView: { scrollDOM: scroller, coordsAtPos: position => ({ top: position - scroller.scrollTop }) },
@@ -374,7 +374,7 @@ for (const bad of [null, [], questions.slice(1), questions.map(item => ({ ...ite
   const server = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8');
   const route = server.slice(server.indexOf("if (url.pathname === '/brief')"), server.indexOf('// POST /idea'));
   let sent, result, raw = JSON.stringify(questions);
-  const context = vm.createContext({
+  const context = docContext({
     BRIEF_STEPS, BRIEF_PROMPT, validateBriefQuestions, url: { pathname: '/brief' }, signal: new AbortController().signal, res: {},
     completeText: async request => { sent = request; return raw; },
     sendJson: (_res, status, payload) => { result = { status, payload }; },
@@ -401,7 +401,7 @@ for (const bad of [null, [], questions.slice(1), questions.map(item => ({ ...ite
 {
   const entries = new Map();
   let request, notice, summaries = 0, draft = 'Рассказ о море.';
-  const context = vm.createContext({
+  const context = docContext({
     BRIEF_STEPS, validateBriefQuestions, validateBriefUpdate, AbortController, positionBrief: null, briefSession: null,
     cancelSuggestion() {}, ghostClear() {},
     docStorage: { getItem: key => entries.get(key), setItem: (key, value) => entries.set(key, value), removeItem: key => entries.delete(key) },
@@ -505,7 +505,7 @@ for (const bad of [null, [], questions.slice(1), questions.map(item => ({ ...ite
   assert.equal(normal.edits[0].state, 'pending', 'Existing edit envelopes remain compatible');
 
   let undo, saved = 0, notice;
-  const context = vm.createContext({
+  const context = docContext({
     validateBriefUpdate, positionBrief: { goal: 'explain', reader: 'experts' }, briefSession: null,
     saveBrief: () => saved++, notify: text => { notice = text; }, notifyUndo: (_text, callback) => { undo = callback; },
   });

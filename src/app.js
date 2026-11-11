@@ -37,6 +37,7 @@ import { spellMarkerField, createSpelling } from './editor/spelling.js';
 import { combobox, setOptions, fieldValue } from './combobox.js';
 import { chatEl } from './dom.js';
 import { api } from './api.js';
+import { createDocumentState } from './document-state.js';
 import { createUpdateCheck } from './update.js';
 import { createSuggest } from './features/suggest.js';
 import { setGenerationFx, generationField, slashRequest, requestField, createGenerate } from './features/generate.js';
@@ -125,28 +126,8 @@ themeToggleEl.addEventListener('change', () => {
 // panel grows with its content: a fixed guess leaves the line being typed —
 // and the suggestion under it — hidden behind the cards.
 let chatHeight = 140;
-let documentKey = null;
-// The header no longer shows the file name; `Save as new…` still needs it to
-// prefill its field.
-let documentName = '';
-let diskRevision = null;
-let diskText = null;
-let diskTimer = null;
-let saving = false;
-let savePromise = null;
-let switchingDocument = false;
-let desktopSaving = false;
-let savePaused = true;
-// A disk conflict pauses disk writes only: the draft, the suggestions and
-// the assistant keep working on the local copy. savePaused above is the
-// heavier brake — save errors and loading — which still gates everything.
-let diskHold = false;
-// Deleting the open file holds autosave only: recreating it 800 ms later
-// would undo the delete behind the writer's back. An explicit save still
-// goes through and brings the file back; Undo restores it at once.
-let autosaveHold = false;
-let loadingDocument = true;
-let editVersion = 0;
+// The open document's load and save state, shared by every part of the page.
+const docState = createDocumentState();
 // ─── Notices ─── (src/notices.js)
 const notices = createNotices({
   editFeedback, noticeLive, chatPanel, chatInput,
@@ -179,9 +160,9 @@ try {
   sessionStorage.setItem('stilura-tab', tabId);
 } catch { tabId = crypto.randomUUID(); }
 const docStorage = {
-  getItem(key) { try { return documentKey ? (key === 'wa-working' ? localStorage.getItem(documentKey + key + ':' + tabId) : null) ?? localStorage.getItem(documentKey + key) : null; } catch { return null; } },
-  setItem(key, value) { try { if (documentKey) { localStorage.setItem(documentKey + key, value); if (key === 'wa-working') localStorage.setItem(documentKey + key + ':' + tabId, value); } } catch { notify('Browser backup unavailable — keep this tab open until saved', { sticky: true, key: 'backup' }); } },
-  removeItem(key) { try { if (documentKey) localStorage.removeItem(documentKey + key); } catch {} },
+  getItem(key) { try { return docState.documentKey ? (key === 'wa-working' ? localStorage.getItem(docState.documentKey + key + ':' + tabId) : null) ?? localStorage.getItem(docState.documentKey + key) : null; } catch { return null; } },
+  setItem(key, value) { try { if (docState.documentKey) { localStorage.setItem(docState.documentKey + key, value); if (key === 'wa-working') localStorage.setItem(docState.documentKey + key + ':' + tabId, value); } } catch { notify('Browser backup unavailable — keep this tab open until saved', { sticky: true, key: 'backup' }); } },
+  removeItem(key) { try { if (docState.documentKey) localStorage.removeItem(docState.documentKey + key); } catch {} },
 };
 const jobs = new Set();
 // JSON in storage can be stale, truncated, or hand-edited. A corrupt value
@@ -475,7 +456,7 @@ settingsDialog.querySelector('.dialog-close').addEventListener('click', closeSet
 // Without a model every AI action fails in the console and the editor just
 // looks broken. Send the writer to the one place that fixes it instead.
 async function ensureAgent() {
-  if (loadingDocument) { notify('Wait until the draft is loaded'); return false; }
+  if (docState.loadingDocument) { notify('Wait until the draft is loaded'); return false; }
   if (currentAgent()) return true;
   // The status call may still be in flight on a fresh load — ask once more
   // before telling the writer their setup is missing.
@@ -801,7 +782,7 @@ const { refreshUpdate } = createUpdateCheck({ storage: localStorage, checkbox: u
 let suggestWorking = '';   // "Suggesting…" while a request is out
 const { cancelSuggestion, suggestSchedule, suggestionUpdate, suggestFetch, pending: suggestPending } = createSuggest({
   getView: () => workView,
-  paused: () => loadingDocument || savePaused,
+  paused: () => docState.loadingDocument || docState.savePaused,
   generating: () => !!generate.job(),
   statusShown: () => !!suggestWorking,
   setSuggestStatus: (...args) => setSuggestStatus(...args),
@@ -818,9 +799,9 @@ const { cancelSuggestion, suggestSchedule, suggestionUpdate, suggestFetch, pendi
 // ─── Generate in the draft ─── (src/features/generate.js)
 const generate = createGenerate({
   jobs,
-  documentKey: () => documentKey,
-  loading: () => loadingDocument,
-  paused: () => loadingDocument || savePaused,
+  documentKey: () => docState.documentKey,
+  loading: () => docState.loadingDocument,
+  paused: () => docState.loadingDocument || docState.savePaused,
   passageFx: () => setPassageFx,
   // Callbacks, not references: several are declared further down main().
   cancelSuggestion: () => cancelSuggestion(),
@@ -850,9 +831,9 @@ function editorSetReadonly(view, on) {
 // ─── Local passage actions ─── (src/features/passage.js)
 const passage = createPassage({
   jobs,
-  documentKey: () => documentKey,
-  loading: () => loadingDocument,
-  paused: () => loadingDocument || savePaused,
+  documentKey: () => docState.documentKey,
+  loading: () => docState.loadingDocument,
+  paused: () => docState.loadingDocument || docState.savePaused,
   cancelSuggestion: () => cancelSuggestion(),
   combinedContext: () => combinedContext(),
   currentAgent: () => currentAgent(),
@@ -1032,7 +1013,7 @@ function syncChatEditCard(edit, ui) {
   ui.retarget.hidden = !lost;
   ui.preview.textContent = plainPreview?.edit === edit ? 'End preview' : 'Preview';
   ui.preview.setAttribute('aria-pressed', String(plainPreview?.edit === edit));
-  ui.apply.disabled = ui.undo.disabled = workView.state.readOnly || loadingDocument || savePaused;
+  ui.apply.disabled = ui.undo.disabled = workView.state.readOnly || docState.loadingDocument || docState.savePaused;
   syncRetarget(ui);
   // Applied needs no status: the tag in the title says it.
   ui.status.textContent = lost
@@ -1044,7 +1025,7 @@ function syncChatEditCard(edit, ui) {
 // status line beside it says what to do until then. Cheap enough to run on
 // every selection change.
 function syncRetarget(ui) {
-  ui.retarget.disabled = workView.state.selection.main.empty || workView.state.readOnly || loadingDocument || savePaused;
+  ui.retarget.disabled = workView.state.selection.main.empty || workView.state.readOnly || docState.loadingDocument || docState.savePaused;
 }
 function syncChatEditCards() {
   for (const [edit, ui] of chatEditCards) {
@@ -1053,7 +1034,7 @@ function syncChatEditCards() {
   }
 }
 function changeChatEdit(edit, undo = false, automatic = false) {
-  if (workView.state.readOnly || loadingDocument || savePaused || !chatEditMatches(edit, workView.state.doc.toString())
+  if (workView.state.readOnly || docState.loadingDocument || docState.savePaused || !chatEditMatches(edit, workView.state.doc.toString())
     || edit.state !== (undo ? 'applied' : 'pending')) return;
   clearPlainPreview();
   const text = undo ? edit.quote : edit.replacement;
@@ -1721,13 +1702,13 @@ let plusOff = 0;
 let plusRaf = 0;
 
 // Paragraph splitting on every mousemove would tax long drafts; the split
-// only changes on edit, so cache it keyed by editVersion.
+// only changes on edit, so cache it keyed by docState.editVersion.
 let paraCacheVersion = -1;
 let paraCache = [];
 function cachedParagraphs() {
-  if (paraCacheVersion !== editVersion) {
+  if (paraCacheVersion !== docState.editVersion) {
     paraCache = paragraphRanges(workView.state.doc.toString());
-    paraCacheVersion = editVersion;
+    paraCacheVersion = docState.editVersion;
   }
   return paraCache;
 }
@@ -1764,7 +1745,7 @@ function moveNotePlus(event) {
     // the bubble anyway. A selection hides it only while
     // its bubble stands: Change puts the bubble away but leaves the passage
     // selected, and that must not take the "+" from every paragraph.
-    if (!railOn || loadingDocument || event.buttons !== 0
+    if (!railOn || docState.loadingDocument || event.buttons !== 0
         || (!workView.state.selection.main.empty && !markBubble.hidden)) {
       hideNotePlus();
       return;
@@ -2688,31 +2669,31 @@ const workView = new EditorView({
       }),
 
       EditorView.updateListener.of(update => {
-        if (passage.job() && (!update.state.field(passageField) || update.state.readOnly || loadingDocument || savePaused)) passage.job().abort();
-        if (generate.job() && (!update.state.field(generationField) || update.state.readOnly || loadingDocument || savePaused)) generate.job().abort();
+        if (passage.job() && (!update.state.field(passageField) || update.state.readOnly || docState.loadingDocument || docState.savePaused)) passage.job().abort();
+        if (generate.job() && (!update.state.field(generationField) || update.state.readOnly || docState.loadingDocument || docState.savePaused)) generate.job().abort();
         if (update.selectionSet && !update.docChanged) for (const ui of chatEditCards.values()) if (!ui.retarget.hidden) syncRetarget(ui);
         if (update.docChanged) {
           liveSync?.changed(update.changes);
-          editVersion++;
+          docState.editVersion++;
           for (const request of chatRequests) request.changes.push(update.changes);
           for (const message of chatHistory) for (const edit of message.edits || []) {
             if (edit !== changingChatEdit) mapChatEdit(edit, update.changes);
           }
           syncChatEditCards();
-          if (!loadingDocument) saveChat();
+          if (!docState.loadingDocument) saveChat();
           if (update.transactions.some(tr => tr.isUserEvent('undo') || tr.isUserEvent('redo'))) clearNotice('undo');
           // A hover preview is a decoration over the old range; any edit drops it.
           if (plainPreview) queueMicrotask(clearPlainPreview);
           // Map anchors now; redraw and persist on the next tick because a
           // dispatch inside an update listener is illegal.
-          if (marginNotes.length && !loadingDocument) {
+          if (marginNotes.length && !docState.loadingDocument) {
             // A disk reload replaces everything without identifying which passage changed.
             let replacedAll = false;
             update.changes.iterChangedRanges((from, to) => { if (from === 0 && to === update.startState.doc.length) replacedAll = true; });
             if (!replacedAll) mapNoteAnchors(marginNotes, update.startState.doc.toString(), update.state.doc.toString(), update.changes);
-            queueMicrotask(() => { if (!loadingDocument && marginNotes.length) { syncNoteMarks(); saveNotes(); } });
+            queueMicrotask(() => { if (!docState.loadingDocument && marginNotes.length) { syncNoteMarks(); saveNotes(); } });
           }
-          if (!loadingDocument) save();
+          if (!docState.loadingDocument) save();
           scheduleSpellCheck();
 
         }
@@ -2779,8 +2760,8 @@ function dialog(title) {
   return modal;
 }
 function loadFromDisk(text) {
-  loadingDocument = true;
-  autosaveHold = false;   // the document is replaced — no delete to guard
+  docState.loadingDocument = true;
+  docState.autosaveHold = false;   // the document is replaced — no delete to guard
   chatEditCards.clear();
   clearNotice('undo');
   for (const job of jobs) job.abort();
@@ -2796,7 +2777,7 @@ function loadFromDisk(text) {
   docStorage.removeItem('wa-chat');
   setChatOpen(false);   // the stream was just emptied — don't leave × over nothing
   maybeCollapseIsland();
-  loadingDocument = false;
+  docState.loadingDocument = false;
 }
 // Replacing the draft asks nothing: the old text goes to History, and the
 // notice carries an Undo for the next few seconds.
@@ -2807,15 +2788,15 @@ function replaceDraft(text, message) {
 }
 function saveToDisk() {
   if (liveSync?.active) return;
-  clearTimeout(diskTimer);
-  if (savePaused || loadingDocument || diskHold || autosaveHold) return;
+  clearTimeout(docState.diskTimer);
+  if (docState.savePaused || docState.loadingDocument || docState.diskHold || docState.autosaveHold) return;
   // Routine saves are silent: autosave is expected to work, and a Saved /
   // Unsaved flicker on every pause reports nothing the writer can act on.
   // The header speaks only when attention is needed (error, conflict).
-  diskTimer = setTimeout(flushSave, 800);
+  docState.diskTimer = setTimeout(flushSave, 800);
 }
 function draftUrl(suffix = '') {
-  return `/draft${suffix}` + (documentName ? `?name=${encodeURIComponent(documentName)}` : '');
+  return `/draft${suffix}` + (docState.documentName ? `?name=${encodeURIComponent(docState.documentName)}` : '');
 }
 function openDocumentText(text) {
   // Drop the previous file's undo stack before installing the new text.
@@ -2828,39 +2809,39 @@ function openDocumentText(text) {
 }
 function flushSave() {
   if (liveSync?.active) return liveSync.flush();
-  if (saving) return savePromise;
-  if (savePaused || loadingDocument || diskHold) return;
+  if (docState.saving) return docState.savePromise;
+  if (docState.savePaused || docState.loadingDocument || docState.diskHold) return;
   const text = workView.state.doc.toString();
-  if (text === diskText && diskRevision !== 'missing') return;
-  saving = true;
-  savePromise = (async () => {
+  if (text === docState.diskText && docState.diskRevision !== 'missing') return;
+  docState.saving = true;
+  docState.savePromise = (async () => {
   try {
     const response = await fetch(draftUrl(), {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, revision: diskRevision }),
+      body: JSON.stringify({ text, revision: docState.diskRevision }),
     });
     const data = await response.json();
     if (response.status === 409) { handleFreshDisk(data.current); return; }
     if (!response.ok) throw new Error(data.error || 'Save failed');
     noteDiskBaseline(text, data.revision);
-    autosaveHold = false;   // any successful save resumes the schedule
+    docState.autosaveHold = false;   // any successful save resumes the schedule
     // A recovered save clears a previous error line, then goes quiet again.
     clearNotice('disk');
   } catch (error) {
-    savePaused = true;
+    docState.savePaused = true;
     cancelSuggestion();
     ghostClear(workView);
     // The payload belongs in the tooltip; the notice carries the sentence
     // and the way out.
     notifyProblem({ say: 'Not saved — autosave paused.', act: 'retry', detail: error.message },
-      () => { savePaused = false; saveToDisk(); }, 'Retry saving', 'disk');
+      () => { docState.savePaused = false; saveToDisk(); }, 'Retry saving', 'disk');
   } finally {
-    saving = false;
-    savePromise = null;
-    if (!savePaused && workView.state.doc.toString() !== diskText) saveToDisk();
+    docState.saving = false;
+    docState.savePromise = null;
+    if (!docState.savePaused && workView.state.doc.toString() !== docState.diskText) saveToDisk();
   }
   })();
-  return savePromise;
+  return docState.savePromise;
 }
 function save() {
   docStorage.setItem('wa-working', workView.state.doc.toString());
@@ -2883,7 +2864,7 @@ let driftCurrent = null;   // fresh { text, revision } awaiting a choice
 // reopen with unsaved work looks identical to an external edit — that
 // confusion is what the old launch modal punished.
 function noteDiskBaseline(text, revision) {
-  diskText = text; diskRevision = revision;
+  docState.diskText = text; docState.diskRevision = revision;
   docStorage.setItem('wa-disk', JSON.stringify({ text, revision }));
 }
 function lastDiskBaseline() {
@@ -2905,12 +2886,12 @@ function adoptDiskText(current, announce = false) {
   workView.dispatch({ changes: { from: 0, to: workView.state.doc.length, insert: current.text } });
   noteDiskBaseline(current.text, current.revision);
   liveSync?.connect(current);
-  diskHold = false; hideDriftBanner(); save();
+  docState.diskHold = false; hideDriftBanner(); save();
   if (announce) notify('Reloaded from disk — it changed outside Stilura.');
 }
 function showDriftBanner(current) {
   driftCurrent = current;
-  diskHold = true;
+  docState.diskHold = true;
   // The banner is the whole report for this case: it sits over the draft,
   // names the conflict and carries both ways out. A second copy in the stream
   // said the same sentence in error red and pulled the panel open over the
@@ -2962,11 +2943,11 @@ document.getElementById('drift-keep').addEventListener('click', () => {
   // its own checkpoint in History.
   noteDiskBaseline(driftCurrent.text, driftCurrent.revision);
   liveSync?.connect(driftCurrent);
-  diskHold = false; hideDriftBanner(); save(); workView.focus();
+  docState.diskHold = false; hideDriftBanner(); save(); workView.focus();
 });
 function restoreDocument(current) {
-  documentKey = 'stilura:' + current.id + ':';
-  documentName = current.name ?? current.path.split(/[\\/]/).pop();
+  docState.documentKey = 'stilura:' + current.id + ':';
+  docState.documentName = current.name ?? current.path.split(/[\\/]/).pop();
   // Capture the old baseline before installing the current disk revision.
   const driftBase = lastDiskBaseline();
   noteDiskBaseline(current.text, current.revision);
@@ -2974,8 +2955,8 @@ function restoreDocument(current) {
   // Normalize disk text once; cached work already has the writer's formatting.
   const opened = cached === null ? unwrapProse(current.text) : { text: cached, joined: 0 };
   openDocumentText(opened.text);
-  loadingDocument = false;
-  savePaused = false;
+  docState.loadingDocument = false;
+  docState.savePaused = false;
   restoreChat(); restoreNotes(); restoreBrief(); renderFileList();
   if (cached !== null) {
     const verdict = resolveDrift(workView.state.doc.toString(), current.text, driftBase?.text);
@@ -2983,9 +2964,9 @@ function restoreDocument(current) {
     else if (verdict === 'diverged') showDriftBanner(current);
   }
   else clearNotice('disk');
-  if (!diskHold) liveSync.connect(current);
+  if (!docState.diskHold) liveSync.connect(current);
   if (opened.joined > 0) {
-    notifyUndo(`Opened ${documentName} — ${opened.joined} wrapped ${opened.joined === 1 ? 'line' : 'lines'} joined into paragraphs. Saves go to this file.`, () => {
+    notifyUndo(`Opened ${docState.documentName} — ${opened.joined} wrapped ${opened.joined === 1 ? 'line' : 'lines'} joined into paragraphs. Saves go to this file.`, () => {
       workView.dispatch({ changes: { from: 0, to: workView.state.doc.length, insert: current.text } });
       save();
     });
@@ -3012,7 +2993,7 @@ liveSync = liveDocument({
     try { return JSON.parse(docStorage.getItem('wa-note-pending') || '[]'); } catch { return []; }
   },
   writePendingNotes: entries => docStorage.setItem('wa-note-pending', JSON.stringify(entries)),
-  onSaved(current) { noteDiskBaseline(current.text, current.revision); savePaused = false; clearNotice('disk'); },
+  onSaved(current) { noteDiskBaseline(current.text, current.revision); docState.savePaused = false; clearNotice('disk'); },
   onError(error) { notify('Synchronization paused — your local changes are kept.', { sticky: true, key: 'disk', detail: error.message, action: () => liveSync.flush().catch(error => notify(error.message)), label: 'Retry' }); },
   onConflict: showDriftBanner,
   onNotes(notes, ready) {
@@ -3038,12 +3019,12 @@ liveSync = liveDocument({
 initializeDocument();
 async function checkDiskDrift() {
   if (liveSync?.active) { await liveSync.flush().catch(() => {}); return; }
-  if (loadingDocument || switchingDocument || saving || autosaveHold) return;
-  const key = documentKey;
+  if (docState.loadingDocument || docState.switchingDocument || docState.saving || docState.autosaveHold) return;
+  const key = docState.documentKey;
   try {
     const current = await api(draftUrl());
-    if (key !== documentKey || switchingDocument) return;
-    if (current.revision !== diskRevision) handleFreshDisk(current);
+    if (key !== docState.documentKey || docState.switchingDocument) return;
+    if (current.revision !== docState.diskRevision) handleFreshDisk(current);
   } catch (error) { notify(`Unable to check the file on disk: ${error.message}. Your draft is kept.`, { sticky: true, key: 'disk', action: checkDiskDrift, label: 'Try again' }); }
 }
 window.addEventListener('focus', () => { checkDiskDrift(); if (!sidebar.classList.contains('is-closed')) refreshFileList(); });
@@ -3052,7 +3033,7 @@ document.addEventListener('visibilitychange', () => {
   else { checkDiskDrift(); refreshUpdate(); }
 });
 window.addEventListener('beforeunload', event => {
-  if (!loadingDocument && (saving || workView.state.doc.toString() !== diskText)) { event.preventDefault(); event.returnValue = ''; }
+  if (!docState.loadingDocument && (docState.saving || workView.state.doc.toString() !== docState.diskText)) { event.preventDefault(); event.returnValue = ''; }
 });
 document.getElementById('file-new').addEventListener('click', () => {
   if (workView.state.doc.length) replaceDraft('', 'New document — the old text is in History');
@@ -3061,11 +3042,11 @@ document.getElementById('file-new').addEventListener('click', () => {
 document.getElementById('file-export').addEventListener('click', async () => {
   try {
   if (typeof window.showSaveFilePicker !== 'function') {
-    exportText(workView.state.doc.toString(), documentName);
+    exportText(workView.state.doc.toString(), docState.documentName);
     return;
   }
   const handle = await window.showSaveFilePicker({
-    suggestedName: documentName,
+    suggestedName: docState.documentName,
     types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown'], 'text/plain': ['.txt'] } }],
   });
   const writable = await handle.createWritable();
@@ -3079,10 +3060,10 @@ document.getElementById('file-export').addEventListener('click', async () => {
 });
 document.addEventListener('keydown', event => {
   if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 's') return;
-  event.preventDefault(); clearTimeout(diskTimer); flushSave();
+  event.preventDefault(); clearTimeout(docState.diskTimer); flushSave();
 });
 async function importFile(file) {
-  if (!file || loadingDocument) return;
+  if (!file || docState.loadingDocument) return;
   if (file.size > 1024 * 1024 || !/\.(md|markdown|txt)$/i.test(file.name)) {
     notify('Open a Markdown or text file under 1 MB.');
     return;
@@ -3179,7 +3160,7 @@ function renderFileList() {
     row.className = 'file-card';
     // The card shows name, age and excerpt; the size stays in the tooltip.
     row.title = `${file.name} · ${formatFileSize(file.size)}`;
-    if (file.name === documentName) row.setAttribute('aria-current', 'true');
+    if (file.name === docState.documentName) row.setAttribute('aria-current', 'true');
     const top = chatEl('span', 'file-card-top');
     const name = chatEl('span', 'file-name', '');
     name.textContent = file.name;
@@ -3214,38 +3195,38 @@ async function refreshFileList() {
 // saved, and its browser copy, chat waits under their own storage
 // key until it is opened again.
 async function switchDocument(name) {
-  if (loadingDocument || switchingDocument || desktopSaving || name === documentName) { workView.focus(); return; }
-  switchingDocument = true;
+  if (docState.loadingDocument || docState.switchingDocument || docState.desktopSaving || name === docState.documentName) { workView.focus(); return; }
+  docState.switchingDocument = true;
   editorSetReadonly(workView, true);
   for (const job of jobs) job.abort();
   cancelSuggestion();
   try {
   // Finish both the in-flight save and any newer keystrokes before switching.
   try {
-    if (savePaused || diskHold) throw new Error('Resolve the draft save error or disk conflict before switching files.');
-    clearTimeout(diskTimer);
-    if (!autosaveHold) await flushSave();
-    if (!savePaused && !diskHold && !autosaveHold) await flushSave();
-    clearTimeout(diskTimer);
+    if (docState.savePaused || docState.diskHold) throw new Error('Resolve the draft save error or disk conflict before switching files.');
+    clearTimeout(docState.diskTimer);
+    if (!docState.autosaveHold) await flushSave();
+    if (!docState.savePaused && !docState.diskHold && !docState.autosaveHold) await flushSave();
+    clearTimeout(docState.diskTimer);
     saveChat(); saveNotes(); saveBrief();
     if (liveSync?.active) await liveSync.flush();
-    if (savePaused || diskHold || (!autosaveHold && workView.state.doc.toString() !== diskText)) throw new Error('The draft has not been saved.');
+    if (docState.savePaused || docState.diskHold || (!docState.autosaveHold && workView.state.doc.toString() !== docState.diskText)) throw new Error('The draft has not been saved.');
     saveSnapshot('Before switching document');
     if (desktop) await localStorage.flush();
   } catch (error) {
-    notify(`Unable to save ${documentName}: ${error.message}. The current draft stays open.`, {
+    notify(`Unable to save ${docState.documentName}: ${error.message}. The current draft stays open.`, {
       sticky: true, key: 'disk', label: 'Retry saving',
-      action: diskHold ? null : () => { savePaused = false; return switchDocument(name); },
+      action: docState.diskHold ? null : () => { docState.savePaused = false; return switchDocument(name); },
     });
     return;
   }
-  autosaveHold = false;   // moving on ends the deleted-file episode
+  docState.autosaveHold = false;   // moving on ends the deleted-file episode
   let current;
   try {
     current = await api('/draft/open', { method: 'POST', body: JSON.stringify({ name }) });
   } catch (error) { notify(`Unable to open ${name}: ${error.message}. The current draft stays open.`, { sticky: true, action: () => switchDocument(name), label: 'Try again' }); return; }
   liveSync?.close();
-  loadingDocument = true;
+  docState.loadingDocument = true;
   for (const job of jobs) job.abort();
   cancelSuggestion();
   // Per-document UI bound to the old text goes; the old file's own state was
@@ -3261,15 +3242,15 @@ async function switchDocument(name) {
   chatHistory = []; chatStream.replaceChildren();
   setChatOpen(false);   // the stream was just emptied — don't leave × over nothing
   maybeCollapseIsland();
-  hideDriftBanner(); diskHold = false;
+  hideDriftBanner(); docState.diskHold = false;
   // Retarget storage and the disk baseline onto the new file first: every
   // restore below reads under the new key.
   const opened = restoreDocument(current);
   refreshFileList();
-  if (!opened.joined) notify(`Opened ${documentName}. Saves go to this file.`);
+  if (!opened.joined) notify(`Opened ${docState.documentName}. Saves go to this file.`);
   workView.focus();
   } finally {
-    switchingDocument = false;
+    docState.switchingDocument = false;
     editorSetReadonly(workView, false);
     saveToDisk();
   }
@@ -3343,7 +3324,7 @@ document.getElementById('file-history').addEventListener('click', async () => {
     if (!Array.isArray(local)) throw new Error('Local history is corrupt');
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key || !key.startsWith(documentKey + 'wa-working:') || key.endsWith(':' + tabId)) continue;
+      if (!key || !key.startsWith(docState.documentKey + 'wa-working:') || key.endsWith(':' + tabId)) continue;
       let text = null;
       try { text = localStorage.getItem(key); } catch {}
       if (typeof text === 'string' && text !== current) local.push({ text, at: new Date().toISOString(), label: 'Copy from another tab' });
@@ -3366,10 +3347,10 @@ window.addEventListener('stilura-storage-error', event => {
 if (desktop) {
   const events = new EventSource('/api/desktop/events');
   function resumeDesktop() {
-    if (!desktopSaving) return;
-    desktopSaving = false;
+    if (!docState.desktopSaving) return;
+    docState.desktopSaving = false;
     document.body.inert = false;
-    editorSetReadonly(workView, loadingDocument || switchingDocument);
+    editorSetReadonly(workView, docState.loadingDocument || docState.switchingDocument);
   }
   events.onerror = resumeDesktop;
   events.onmessage = async event => {
@@ -3378,18 +3359,18 @@ if (desktop) {
     if (message.type !== 'flush') return;
     let error = '';
     try {
-      if (loadingDocument || switchingDocument) throw new Error('Wait for the document to finish opening.');
+      if (docState.loadingDocument || docState.switchingDocument) throw new Error('Wait for the document to finish opening.');
       document.activeElement?.blur();
-      desktopSaving = true;
+      docState.desktopSaving = true;
       document.body.inert = true;
       editorSetReadonly(workView, true);
       stopJobs();
-      clearTimeout(diskTimer);
-      if (savePaused || diskHold) throw new Error('Resolve the draft save error or disk conflict before closing.');
+      clearTimeout(docState.diskTimer);
+      if (docState.savePaused || docState.diskHold) throw new Error('Resolve the draft save error or disk conflict before closing.');
       await flushSave();
       // A save already in flight may have contained the previous keystroke.
-      if (!savePaused && !diskHold) await flushSave();
-      if (savePaused || diskHold || workView.state.doc.toString() !== diskText) throw new Error('The draft has not been saved.');
+      if (!docState.savePaused && !docState.diskHold) await flushSave();
+      if (docState.savePaused || docState.diskHold || workView.state.doc.toString() !== docState.diskText) throw new Error('The draft has not been saved.');
       await localStorage.flush();
     } catch (cause) { error = cause.message; resumeDesktop(); }
     try {
