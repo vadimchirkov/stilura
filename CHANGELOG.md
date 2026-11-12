@@ -4,6 +4,7 @@ Stilura (renamed from Litura) follows [semantic versioning](https://semver.org).
 
 ## Unreleased
 
+- A selection over several lines is tinted on the selected text only; it no longer lights up the whole width of the window. The selection bubble is a little smaller.
 - Settings read more clearly. The Model tab says what the model is used for, labels the API key field and says where the key goes, names the ChatGPT sign-in and explains the device code, tucks the paste-the-address fallback away until needed, and says plainly when a provider still needs connecting. Removing a key says that a second press removes it. The repeated list of connected providers is gone. General puts Appearance and Updates first with matching switches and ends with a shortcut table that shows ⌘ or Ctrl for your system.
 - Focus mode: Cmd/Ctrl+. (or Settings › General) fades every paragraph but the one you are writing, keeps its line in the middle of the window while you type, and hides the shortcut hints. It is remembered per browser and never changes the draft.
 - Automatic continuations are bolder: they follow the same rules as an explicit Cmd/Ctrl+Enter and may finish the current sentence with a plausible clause in your voice. They still add no fact, number, name, source or quotation the draft does not contain. With the stricter rules, ChatGPT models stayed silent at most pauses.

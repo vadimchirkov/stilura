@@ -1,4 +1,4 @@
-import { EditorView } from '@codemirror/view';
+import { EditorView, Decoration } from '@codemirror/view';
 
 // The editor's look, injected into <head> by CodeMirror. `dark` only tells
 // CodeMirror which base theme to pair it with; colours come from CSS variables.
@@ -45,9 +45,17 @@ export const createEditorTheme = dark => EditorView.theme({
     borderLeftWidth: '1.5px',
   },
 
-  // Selection highlight
-  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
-    background: 'var(--attached-tint) !important',
+  // Selection highlight: a mark on the selected text itself (textSelection
+  // below). CodeMirror's selection rectangles span the content box, which
+  // includes the wide side margins of the centred column, so a selection over
+  // several lines lit up the whole window; and tinting the native ::selection
+  // let the browser do the same. Both stay transparent.
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
+    background: 'transparent !important',
+  },
+  '.cm-selected-text': {
+    background: 'var(--attached-tint)',
+    boxDecorationBreak: 'clone',
   },
 
   // ── Suggestion ─────────────────────────────────────────────────────────────
@@ -85,3 +93,8 @@ export const createEditorTheme = dark => EditorView.theme({
   // Hide gutters and fold markers — this is a prose editor
   '.cm-gutters': { display: 'none' },
 }, { dark });
+
+// The selection, drawn on the selected characters only.
+const selectedText = Decoration.mark({ class: 'cm-selected-text' });
+export const textSelection = EditorView.decorations.compute(['selection'], state =>
+  Decoration.set(state.selection.ranges.filter(range => !range.empty).map(range => selectedText.range(range.from, range.to)), true));

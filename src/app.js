@@ -45,7 +45,7 @@ import { setGenerationFx, generationField, slashRequest, requestField, createGen
 import { setPassageFx, createPassage } from './features/passage.js';
 import { createBubble } from './features/bubble.js';
 import { createNotices, modelError } from './notices.js';
-import { createEditorTheme } from './editor/theme.js';
+import { createEditorTheme, textSelection } from './editor/theme.js';
 import { BRIEF_STEPS, validateBriefQuestions, validateBriefUpdate } from '../brief.js';
 
 async function main() {
@@ -2581,6 +2581,7 @@ const workView = new EditorView({
       // Undo/redo
       historyComp.of(history()),
       drawSelection(),
+      textSelection,
       focusMode,
 
       // ── Keymaps (highest priority first) ──────────────────────────────────
