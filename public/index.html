@@ -176,7 +176,7 @@
       <header>
         <div>
           <h2>Settings</h2>
-          <p class="settings-sub">Changes take effect immediately.</p>
+          <p class="settings-sub" id="settings-sub">Changes save as you make them.</p>
         </div>
         <button type="button" class="dialog-close" aria-label="Close">×</button>
       </header>
@@ -189,7 +189,8 @@
         <div class="settings-panel" id="settings-panel" role="tabpanel">
 
       <section data-tab="models">
-        <h3>Model for all writing actions</h3>
+        <h3>Writing model</h3>
+        <p class="settings-hint settings-lead" id="model-lead">Used for continuations, / requests and passage rewrites.</p>
         <!-- Hundreds of models behind one field. A native datalist cannot do
              it: its popup never reaches the top layer over a modal dialog, and
              a pre-filled value means typing filters against the old answer. -->
@@ -227,25 +228,35 @@
              Reasoning. Sign-in for subscriptions, an API key for the rest. -->
         <div class="connect-row" id="connect-row" hidden>
           <div class="connect-signin" id="connect-signin" hidden>
-            <button type="button" id="connect-browser" class="connect-primary">Sign in</button>
-            <button type="button" id="connect-device">Device code</button>
+            <button type="button" id="connect-browser" class="connect-primary">Sign in with ChatGPT</button>
+            <button type="button" id="connect-device">Use a device code</button>
+            <p class="settings-hint">Uses your ChatGPT Plus or Pro plan. No API key needed. Use a device code if this computer can't open a browser.</p>
           </div>
-          <div class="key-entry" id="connect-key" hidden>
-            <div class="key-input-wrap">
-            <input id="api-key" type="password" placeholder="API key" autocomplete="off" spellcheck="false" aria-label="API key" aria-describedby="settings-error">
-            <button type="button" id="key-toggle" aria-label="Show API key" title="Show API key">Show</button>
-          </div>
-            <button type="button" id="key-add">Connect</button>
+          <div id="connect-key" hidden>
+            <label class="settings-label" for="api-key" id="api-key-label">API key</label>
+            <div class="key-entry">
+              <div class="key-input-wrap">
+                <input id="api-key" type="password" placeholder="API key" autocomplete="off" spellcheck="false" aria-describedby="api-key-hint settings-error">
+                <button type="button" id="key-toggle" aria-label="Show API key" title="Show API key">Show</button>
+              </div>
+              <button type="button" id="key-add">Connect</button>
+            </div>
+            <p class="settings-hint" id="api-key-hint">Stored on this computer. Sent only to the provider.</p>
           </div>
           <div id="oauth-flow" hidden>
           <p class="settings-hint" id="oauth-status" role="status"></p>
-          <p class="settings-hint" id="oauth-url-wrap" hidden>Open this link to finish signing in: <a id="oauth-url" href="#" target="_blank" rel="noopener">sign-in link</a></p>
-          <p class="settings-hint" id="oauth-device-wrap" hidden>At <a id="oauth-device-link" href="#" target="_blank" rel="noopener">the verification page</a> enter code <strong id="oauth-device-code"></strong></p>
-          <div class="key-entry" id="oauth-paste-wrap" hidden>
-            <div class="key-input-wrap">
-              <input id="oauth-code" type="text" placeholder="Paste the redirect URL or code" autocomplete="off" spellcheck="false" aria-label="Pasted authorization redirect or code">
-            </div>
-            <button type="button" id="oauth-send">Send</button>
+          <p class="settings-hint" id="oauth-url-wrap" hidden>Tab didn't open? <a id="oauth-url" href="#" target="_blank" rel="noopener">Open the sign-in page</a>.</p>
+          <p class="settings-hint" id="oauth-device-wrap" hidden>Go to <a id="oauth-device-link" href="#" target="_blank" rel="noopener">the verification page</a> and enter <strong class="device-code" id="oauth-device-code"></strong></p>
+          <div id="oauth-paste-wrap" hidden>
+            <details class="oauth-paste">
+              <summary>Signed in but nothing happened?</summary>
+              <div class="key-entry">
+                <div class="key-input-wrap">
+                  <input id="oauth-code" type="text" placeholder="Paste the address from your browser" autocomplete="off" spellcheck="false" aria-label="Address from the browser after signing in">
+                </div>
+                <button type="button" id="oauth-send">Finish sign-in</button>
+              </div>
+            </details>
             <button type="button" id="oauth-cancel">Cancel</button>
           </div>
         </div>
@@ -253,34 +264,41 @@
         <p class="settings-hint connection-line" id="connection-line"></p>
         <p class="settings-hint" id="model-hint"></p>
         <p class="settings-error" id="settings-error" role="alert"></p>
-        <p class="settings-hint connected-list" id="connected-list"></p>
       </section>
 
-      <section data-tab="general">
-        <h3>While you write</h3>
-        <p class="settings-hint">Continuations appear while you type. Tab accepts; Escape dismisses. Cmd/Ctrl+Enter requests a continuation.</p>
-        <p class="settings-hint" id="suggest-shortcut">/ followed by a request and Enter previews text, also after existing text on the same line. Tab accepts, Escape dismisses or stops streaming, R regenerates.</p>
-      </section>
 
       <section data-tab="general">
         <h3>Appearance</h3>
         <label class="settings-check theme-toggle">
           <input type="checkbox" id="theme-toggle">
-          <span>Dark mode<small>Use a dark canvas and darker panels.</small></span>
+          <span>Dark mode</span>
         </label>
-        <label class="settings-check">
+        <label class="settings-check theme-toggle">
           <input type="checkbox" id="focus-toggle">
-          <span>Focus mode<small>Fade every paragraph but the one you are writing and keep its line in the middle of the window. Cmd/Ctrl+. switches it.</small></span>
+          <span>Focus mode<small>Dims other paragraphs and keeps your line centered. <kbd class="mod">⌘</kbd> <kbd>.</kbd> turns it on or off.</small></span>
         </label>
       </section>
 
-      <section data-tab="general" class="tab-end" id="settings-updates">
+      <section data-tab="general" id="settings-updates">
         <h3>Updates</h3>
-        <label class="settings-check">
+        <label class="settings-check theme-toggle">
           <input type="checkbox" id="update-check" checked>
-          <span>Ask npm about new versions<small>Once a day. The only request Stilura makes to anyone but your own model provider.</small></span>
+          <span>Check for updates<small>Once a day, from npm. The only request Stilura sends besides your model provider.</small></span>
         </label>
         <p class="settings-hint" id="update-status"></p>
+      </section>
+
+      <section data-tab="general" class="tab-end">
+        <h3>Shortcuts</h3>
+        <dl class="shortcut-list">
+          <dt>Accept a suggestion</dt><dd><kbd>Tab</kbd></dd>
+          <dt>Dismiss or stop</dt><dd><kbd>Esc</kbd></dd>
+          <dt>Write more here</dt><dd><kbd class="mod">⌘</kbd> <kbd>Enter</kbd></dd>
+          <dt>Ask for text</dt><dd><kbd>/</kbd> then your request, <kbd>Enter</kbd></dd>
+          <dt>Change selected text</dt><dd><kbd class="mod">⌘</kbd> <kbd>K</kbd></dd>
+          <dt>Regenerate</dt><dd><kbd>R</kbd></dd>
+          <dt>Focus mode</dt><dd><kbd class="mod">⌘</kbd> <kbd>.</kbd></dd>
+        </dl>
       </section>
 
         </div>

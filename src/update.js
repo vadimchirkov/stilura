@@ -25,10 +25,10 @@ export function createUpdateCheck({ storage, checkbox, badge, status, section })
       badge.title = 'Copy npx stilura to update';
     }
     status.textContent =
-      error  ? `Running ${current} — npm could not be reached.` :
-      stale  ? `Running ${current}; npm publishes ${latest}.` :
-      latest ? `Running ${current} — the published version.` :
-               `Running ${current}.`;
+      error  ? `Version ${current}. Couldn't reach npm.` :
+      stale  ? `Version ${current}. ${latest} is out. Run npx stilura to update.` :
+      latest ? `Version ${current}. Up to date.` :
+               `Version ${current}.`;
   }
 
   badge.addEventListener('click', async () => {

@@ -1970,7 +1970,8 @@ html, body {
   text-transform: none;
 }
 .settings-dialog h2 { font-size: 22px; font-weight: 600; }
-.settings-dialog h3 { margin-bottom: 12px; font-weight: 500; }
+.settings-dialog h3 { margin-bottom: 12px; font-weight: 500; color: var(--text); font-size: 14px; }
+.settings-dialog .settings-lead { margin: -6px 0 12px; }
 .settings-dialog section { padding: 20px 24px; border-bottom: 1px solid var(--border-subtle); }
 .settings-dialog section:last-of-type { border-bottom: 0; }
 
@@ -2315,13 +2316,14 @@ html, body {
 .connect-signin { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .settings-dialog .connect-primary { background: var(--text); color: var(--bg); font-weight: 600; padding: 0 28px; }
 @media (hover: hover) { .settings-dialog .connect-primary:hover { background: color-mix(in srgb, var(--text) 85%, var(--bg)); } }
-#connect-key { grid-template-columns: 1fr auto; }
+#connect-key .key-entry { grid-template-columns: 1fr auto; margin-top: 6px; }
+#connect-key .settings-label { color: var(--muted); font-size: 13px; }
 #oauth-flow { margin-top: 10px; }
-.settings-dialog .connection-line button, .settings-dialog .connected-list button {
+.settings-dialog .connection-line button {
   min-height: 24px; padding: 0 2px; border: 0; background: none; color: var(--text-2); font-size: 13px;
   text-decoration: underline; text-underline-offset: 3px;
 }
-@media (hover: hover) { .settings-dialog .connection-line button:hover, .settings-dialog .connected-list button:hover { background: none; color: var(--text); } }
+@media (hover: hover) { .settings-dialog .connection-line button:hover { background: none; color: var(--text); } }
 .settings-dialog .connection-line button.is-armed { padding: 0 8px; border-radius: var(--r-pill); background: var(--danger); color: var(--overlay); text-decoration: none; }
 #settings-dialog section.tab-end { border-bottom: 0; }
 @media (max-width: 640px) {
@@ -2362,3 +2364,16 @@ html, body {
 .cm-focus-dim { opacity: .28; transition: opacity .2s ease; }
 body.focus-mode .editor-shortcuts { display: none; }
 @media (prefers-reduced-motion: reduce) { .cm-focus-dim { transition: none; } }
+
+/* Settings › General › Shortcuts: what each key does, keys on the right. */
+.shortcut-list { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; margin: 0; font-size: 13px; }
+.shortcut-list dt { color: var(--text-2); }
+.shortcut-list dd { margin: 0; text-align: right; color: var(--muted); }
+.settings-dialog kbd { font: inherit; font-weight: 500; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+/* Sign-in fallbacks stay out of the way until needed. */
+.oauth-paste { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.oauth-paste summary { cursor: pointer; }
+.oauth-paste .key-entry { grid-template-columns: 1fr auto; margin-top: 8px; }
+#oauth-cancel { margin-top: 10px; }
+.device-code { font-family: ui-monospace, monospace; font-size: 16px; letter-spacing: .05em; color: var(--text); }
+.connect-signin .settings-hint { flex-basis: 100%; margin-top: 2px; }

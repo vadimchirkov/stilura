@@ -80,7 +80,6 @@ const connectRow    = document.getElementById('connect-row');
 const connectSignin = document.getElementById('connect-signin');
 const connectKey    = document.getElementById('connect-key');
 const connectionLine = document.getElementById('connection-line');
-const connectedList = document.getElementById('connected-list');
 const settingsError = document.getElementById('settings-error');
 const modelHint     = document.getElementById('model-hint');
 const chatStream    = document.getElementById('chat-stream');
@@ -89,7 +88,10 @@ const chatSendButton = document.getElementById('chat-send');
 const chatClear     = document.getElementById('chat-clear');
 const chatPill      = document.getElementById('chat-pill');
 const chatPillLabel = document.getElementById('chat-pill-label');
-if (!/Mac|iPhone|iPad/.test(navigator.platform)) chatPill.querySelector('kbd').textContent = 'Ctrl K';
+if (!/Mac|iPhone|iPad/.test(navigator.platform)) {
+  chatPill.querySelector('kbd').textContent = 'Ctrl K';
+  for (const key of document.querySelectorAll('kbd.mod')) key.textContent = 'Ctrl';
+}
 const editFeedback = document.getElementById('edit-feedback');
 const noticeLive = document.getElementById('notice-live');
 const chatPanel     = document.getElementById('chat');
@@ -282,35 +284,38 @@ function renderModelSettings() {
     setOptions(thinkingEl, levels.map(level => ({ value: level, label: thinkingNames[level] ?? level })), draftSelection?.thinkingLevel);
     draftSelection = model ? { provider: model.provider, model: model.model, thinkingLevel: fieldValue(thinkingEl) } : null;
   }
-  modelHint.textContent = choices.length ? '' : 'No providers are available. Check the Pi installation.';
-  renderConnection(provider, choices);
+  modelHint.textContent = !choices.length ? 'No providers found. Check that Pi is installed.'
+    : provider && !connected && (provider.signin || provider.key) ? `Connect ${provider.name} to choose a model.` : '';
+  renderConnection(provider);
 }
 
-// Under the fields: how the chosen provider connects (or how it is connected,
-// with the way back out), and a short list of everything connected.
-function renderConnection(provider, choices) {
+// Under the fields: how the chosen provider connects, or how it is
+// connected with the way back out. The provider list already puts the
+// connected ones first, so nothing else repeats them.
+function renderConnection(provider) {
   const connected = !!provider?.connected;
   connectRow.hidden = !provider || connected;
   connectSignin.hidden = connectRow.hidden || !provider.signin;
   connectKey.hidden = connectRow.hidden || !!provider.signin || !provider.key;
-  if (!connectKey.hidden) apiKeyEl.placeholder = provider.key.label ?? 'API key';
+  if (!connectKey.hidden) {
+    apiKeyEl.placeholder = provider.key.label ?? 'API key';
+    document.getElementById('api-key-label').textContent = `${provider.name} API key`;
+    document.getElementById('api-key-hint').textContent = `Stored on this computer. Sent only to ${provider.name}.`;
+  }
   const line = [];
   if (connected && provider.signin?.configured) {
-    line.push('Connected via sign-in · ', linkButton('Sign out', `Sign out of ${provider.name}`, () => removeProviderKey(provider.id)));
+    line.push(`Signed in to ${provider.name}. `, linkButton('Sign out', `Sign out of ${provider.name}`, () => removeProviderKey(provider.id)));
   } else if (connected && provider.key?.configured && provider.key.source !== 'environment') {
-    line.push('Connected via API key · ', removeKeyButton(provider));
+    line.push('Connected with an API key. ', removeKeyButton(provider));
   } else if (connected) {
-    line.push(provider.key?.source === 'environment' ? 'Connected via an environment variable' : 'Connected');
+    line.push(provider.key?.source === 'environment' ? 'Connected with a key from the environment.' : 'Connected.');
   } else if (provider && !provider.signin && !provider.key) {
     line.push('This provider is configured outside Stilura.');
   }
   connectionLine.replaceChildren(...line);
-  const others = choices.filter(choice => choice.connected);
-  connectedList.replaceChildren(...(others.length ? ['Connected: '] : []), ...others.flatMap((choice, index) => [
-    ...(index ? [' · '] : []),
-    linkButton(choice.name, `Use ${choice.name}`, () => selectProvider(choice.id)),
-  ]));
 }
+
+const choiceName = id => providerChoices().find(choice => choice.id === id)?.name ?? id;
 
 function linkButton(label, title, run) {
   const button = document.createElement('button');
@@ -324,15 +329,15 @@ function linkButton(label, title, run) {
 // A removed key cannot be brought back from here: the first press only arms
 // the button, the second removes. Blur or Escape disarms it.
 function removeKeyButton(provider) {
-  const remove = linkButton('Remove', `Remove ${provider.name} key`, () => {
+  const remove = linkButton('Remove key', `Remove ${provider.name} key`, () => {
     if (remove.classList.contains('is-armed')) return removeProviderKey(provider.id);
     remove.classList.add('is-armed');
-    remove.textContent = 'Remove key';
+    remove.textContent = 'Press again to remove';
     remove.ariaLabel = `Confirm: remove ${provider.name} key`;
   });
   const disarm = () => {
     remove.classList.remove('is-armed');
-    remove.textContent = 'Remove';
+    remove.textContent = 'Remove key';
     remove.removeAttribute('aria-label');
   };
   remove.addEventListener('blur', disarm);
@@ -431,6 +436,10 @@ async function openSettings(tab) {
   renderOAuthFlow();
   if (!settingsDialog.open) settingsDialog.showModal();
   else pollOAuth();
+  // First run says why the dialog opened; the next opening reads normally.
+  document.getElementById('settings-sub').textContent = welcome
+    ? 'Choose a model to start writing with AI. Sign in with ChatGPT, or pick another provider and add its API key.'
+    : 'Changes save as you make them.';
   if (welcome && !connectSignin.hidden) document.getElementById('connect-browser').focus();
 }
 
@@ -512,7 +521,7 @@ keyToggleEl.addEventListener('click', () => {
 // request runs, so a double press cannot add the key twice.
 async function addProviderKey() {
   if (!apiKeyEl.value.trim()) {
-    settingsError.textContent = 'Enter an API key first.';
+    settingsError.textContent = 'Paste an API key to connect.';
     apiKeyEl.setAttribute('aria-invalid', 'true');
     showKeyError();
     apiKeyEl.focus();
@@ -530,7 +539,7 @@ async function addProviderKey() {
     if (agentInfo.models.some(model => model.provider === provider)) connectedTo(provider);
     else {
       renderModelSettings();
-      settingsError.textContent = 'The key was saved, but this provider offers no models with it.';
+      settingsError.textContent = `Key saved, but ${choiceName(provider)} lists no models for it. Check the key's access.`;
     }
   } catch (error) {
     settingsError.textContent = error.message;
@@ -620,7 +629,7 @@ function renderOAuthFlow() {
   oauthFlowEl.hidden = !active || (!pending && active.step !== 'error');
   if (oauthFlowEl.hidden) { stopOAuthPoll(); return; }
   if (active.step === 'error') {
-    oauthStatusEl.textContent = `Sign-in failed: ${active.error ?? 'unknown error'}`;
+    oauthStatusEl.textContent = `Sign-in didn't finish.${active.error ? ` ${active.error}.` : ''} Try again.`;
     oauthUrlWrap.hidden = true;
     oauthDeviceWrap.hidden = true;
     oauthPasteWrap.hidden = true;
@@ -628,12 +637,12 @@ function renderOAuthFlow() {
     return;
   }
   oauthStatusEl.textContent = active.step === 'device'
-    ? 'Waiting for approval on the verification page…'
-    : 'Waiting for the browser sign-in to finish…';
+    ? 'Waiting for you to approve on the verification page…'
+    : 'Finish signing in in the new tab.';
   if (active.url) {
     oauthUrlWrap.hidden = false;
     oauthUrlEl.href = active.url;
-    oauthUrlEl.textContent = 'sign-in link';
+    oauthUrlEl.textContent = 'Open the sign-in page';
   } else oauthUrlWrap.hidden = true;
   if (active.step === 'device' && active.userCode) {
     oauthDeviceWrap.hidden = false;
@@ -3371,7 +3380,10 @@ function applyFocus(on, { persist = true } = {}) {
   localStorage.setItem('wa-focus', on ? 'on' : 'off');
   notify(on ? 'Focus mode on. Cmd/Ctrl+. turns it off.' : 'Focus mode off.');
 }
-focusToggleEl.addEventListener('change', () => applyFocus(focusToggleEl.checked));
+focusToggleEl.addEventListener('change', () => {
+  focusToggleEl.classList.add('is-init'); // arm the switch animation after mount, as for the theme
+  applyFocus(focusToggleEl.checked);
+});
 applyFocus(localStorage.getItem('wa-focus') === 'on', { persist: false });
 
 // ─── Initial focus ─────────────────────────────────────────────────────────────

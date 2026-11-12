@@ -51,6 +51,7 @@ try {
   assert.deepEqual(await page.$$eval('.settings-tabs [role="tab"]', tabs => tabs.map(tab => tab.textContent)), ['Model', 'General']);
   assert.match(await page.$eval('#agent-provider', node => node.textContent), /ChatGPT/);
   assert.equal(await page.evaluate(() => document.activeElement.id), 'connect-browser');
+  assert.match(await page.$eval('#settings-sub', node => node.textContent), /^Choose a model to start writing with AI/);
   assert.equal(await visible('#model-field'), false);
   assert.equal(await visible('#connect-key'), false);
 
@@ -65,6 +66,8 @@ try {
   assert.equal(await visible('#connect-key'), true);
   assert.equal(await visible('#connect-signin'), false);
   assert.equal(await visible('#model-field'), false);
+  assert.equal(await page.$eval('#api-key-label', node => node.textContent), 'OpenAI API key');
+  assert.equal(await page.$eval('#model-hint', node => node.textContent), 'Connect OpenAI to choose a model.');
 
   // A key connects it: a model is chosen and saved, and the lines say so.
   await page.type('#api-key', 'sk-fixture-not-a-real-key');
@@ -74,11 +77,11 @@ try {
   assert.equal(saved.provider, 'openai');
   assert.ok(saved.model);
   assert.equal(await visible('#connect-row'), false);
-  assert.match(await page.$eval('#connection-line', node => node.textContent), /Connected via API key · Remove/);
-  assert.match(await page.$eval('#connected-list', node => node.textContent), /^Connected: OpenAI/);
+  assert.equal(await page.$eval('#connection-line', node => node.textContent), 'Connected with an API key. Remove key');
 
-  // Remove asks twice, then the provider is back to its key field.
+  // Remove asks twice and says so, then the provider is back to its key field.
   await page.click('#connection-line button');
+  assert.equal(await page.$eval('#connection-line button', node => node.textContent), 'Press again to remove');
   await page.click('#connection-line button');
   await page.waitForFunction(() => !document.getElementById('connect-key').hidden);
   assert.equal(await page.evaluate(() => localStorage.getItem('wa-agent')), null);
