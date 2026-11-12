@@ -4,6 +4,7 @@ Stilura (renamed from Litura) follows [semantic versioning](https://semver.org).
 
 ## Unreleased
 
+- Focus mode: Cmd/Ctrl+. (or Settings › General) fades every paragraph but the one you are writing, keeps its line in the middle of the window while you type, and hides the shortcut hints. It is remembered per browser and never changes the draft.
 - Automatic continuations are bolder: they follow the same rules as an explicit Cmd/Ctrl+Enter and may finish the current sentence with a plausible clause in your voice. They still add no fact, number, name, source or quotation the draft does not contain. With the stricter rules, ChatGPT models stayed silent at most pauses.
 - A generation waits as the same shimmering skeleton a rewritten passage uses, shaped like the request, instead of the pixel loader.
 - A slash command starts at the slash being typed: a lone slash earlier on the line ("1 / 2", "and / or") no longer takes over the request, in the app and in the browser extension.

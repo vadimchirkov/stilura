@@ -32,6 +32,7 @@ import { hydrateIcons, icon } from './icons.js';
 import { openStorage } from './storage.js';
 import { liveDocument } from './live.js';
 import { markdownField } from './editor/markdown.js';
+import { focusMode, setFocusMode } from './editor/focus.js';
 import { clearGhostFx, ghostField, ghostClear, ghostAccept } from './editor/ghost.js';
 import { spellMarkerField, createSpelling } from './editor/spelling.js';
 import { combobox, setOptions, fieldValue } from './combobox.js';
@@ -2571,6 +2572,7 @@ const workView = new EditorView({
       // Undo/redo
       historyComp.of(history()),
       drawSelection(),
+      focusMode,
 
       // ── Keymaps (highest priority first) ──────────────────────────────────
       //
@@ -2600,6 +2602,11 @@ const workView = new EditorView({
             ghostClear(view);
             return true;
           },
+        },
+        {
+          // Focus mode: Cmd/Ctrl+. as in other focus-writing editors.
+          key: 'Mod-.',
+          run() { applyFocus(!document.body.classList.contains('focus-mode')); return true; },
         },
         {
           key: 'Mod-Enter',
@@ -3351,6 +3358,21 @@ document.getElementById('file-history').addEventListener('click', async () => {
       'Last 20 disk versions and 10 browser checkpoints. Disk copies sit beside the draft in .stilura-history and are never deleted automatically.'));
   } catch (error) { list.append(chatEl('p', 'history-note', error.message)); }
 });
+
+// ─── Focus mode ─── (src/editor/focus.js)
+// Remembered per browser like the theme. The shortcut hints go too: in focus
+// mode nothing but the text is on screen.
+const focusToggleEl = document.getElementById('focus-toggle');
+function applyFocus(on, { persist = true } = {}) {
+  setFocusMode(workView, on);
+  document.body.classList.toggle('focus-mode', on);
+  focusToggleEl.checked = on;
+  if (!persist) return;
+  localStorage.setItem('wa-focus', on ? 'on' : 'off');
+  notify(on ? 'Focus mode on. Cmd/Ctrl+. turns it off.' : 'Focus mode off.');
+}
+focusToggleEl.addEventListener('change', () => applyFocus(focusToggleEl.checked));
+applyFocus(localStorage.getItem('wa-focus') === 'on', { persist: false });
 
 // ─── Initial focus ─────────────────────────────────────────────────────────────
 

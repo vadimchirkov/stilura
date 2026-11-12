@@ -2356,3 +2356,9 @@ html, body {
 
 /* Notes stay stored and mapped while their UI is paused. */
 .note-card, .note-plus { display: none !important; }
+
+/* Focus mode (src/editor/focus.js): the paragraph being written stays, the
+   rest of the draft fades back, and nothing but the text is on screen. */
+.cm-focus-dim { opacity: .28; transition: opacity .2s ease; }
+body.focus-mode .editor-shortcuts { display: none; }
+@media (prefers-reduced-motion: reduce) { .cm-focus-dim { transition: none; } }
