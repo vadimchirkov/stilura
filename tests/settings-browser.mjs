@@ -14,14 +14,49 @@ import { loadPuppeteer } from './browser-driver.mjs';
 const puppeteer = loadPuppeteer();
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stilura-settings-'));
 const draft = path.join(directory, 'draft.md');
-fs.writeFileSync(draft, 'A draft.\n');
+const original = 'A quiet room.\n';
+fs.writeFileSync(draft, original);
+const claude = path.join(directory, 'claude');
+const adapter = path.join(directory, 'claude-agent-acp');
+const statusCommand = loggedIn => fs.writeFileSync(claude, `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ loggedIn, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro' })}'\n`, { mode: 0o755 });
+statusCommand(false);
+fs.writeFileSync(adapter, `#!${process.execPath}
+const assert = require('node:assert/strict');
+const { createInterface } = require('node:readline');
+const send = (message) => console.log(JSON.stringify({ jsonrpc: '2.0', ...message }));
+createInterface({ input: process.stdin }).on('line', line => {
+  const { id, method, params } = JSON.parse(line);
+  let result;
+  if (method === 'initialize') result = { protocolVersion: 1 };
+  else if (method === 'session/new') {
+    const options = params._meta.claudeCode.options;
+    assert.match(options.systemPrompt, /Help with the SELECTED TEXT|<stilura-text>/);
+    assert.deepEqual(options.tools, []);
+    assert.deepEqual(params.mcpServers, []);
+    assert.equal(options.persistSession, false);
+    result = { sessionId: 'fixture' };
+  } else if (method === 'session/prompt') {
+    assert.equal(params.sessionId, 'fixture');
+    const prompt = params.prompt[0].text;
+    assert.match(prompt, /A ⟦quiet⟧ room|Write an ending/);
+    const text = prompt.includes('Write an ending') ? '<stilura-text>The door closed.</stilura-text>'
+      : '<stilura-edits>[{"label":"Synonym","quote":"quiet","replacement":"peaceful"}]</stilura-edits>';
+    for (const chunk of [text.slice(0, 10), text.slice(10)]) {
+      send({ method: 'session/update', params: { sessionId: 'fixture',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunk } } } });
+    }
+    result = { stopReason: 'end_turn' };
+  } else throw new Error(method);
+  send({ id, result });
+});
+`, { mode: 0o755 });
 const env = Object.fromEntries(Object.entries(process.env)
   .filter(([name]) => !/API_KEY|TOKEN|SECRET|^AWS_|^GOOGLE_|^AZURE_|^PI_/.test(name)));
 
 const server = spawn(process.execPath, [fileURLToPath(new URL('../index.js', import.meta.url))], {
   cwd: directory,
   env: { ...env, PORT: '0', STILURA_NO_OPEN: '1', DRAFT_FILE: draft, STILURA_OFFLINE_MODELS: '1',
-    PI_CODING_AGENT_DIR: path.join(directory, 'pi') },
+    PI_CODING_AGENT_DIR: path.join(directory, 'pi'), STILURA_CLAUDE_CODE: claude, STILURA_CLAUDE_ACP: adapter },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 const url = await new Promise((resolve, reject) => {
@@ -86,8 +121,45 @@ try {
   await page.waitForFunction(() => !document.getElementById('connect-key').hidden);
   assert.equal(await page.evaluate(() => localStorage.getItem('wa-agent')), null);
 
+  await page.click('#agent-provider');
+  await page.waitForFunction(() => document.activeElement?.matches('#provider-combo .combo-search'));
+  await page.type('#provider-combo .combo-search', 'Claude Code');
+  await page.click('#provider-combo .combo-item[data-value="claude-code"]');
+  assert.equal(await visible('#connect-claude'), true);
+  assert.equal(await visible('#connect-key'), false);
+  statusCommand(true);
+  await page.click('#claude-recheck');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('wa-agent'))?.provider === 'claude-code');
+  await page.evaluate(() => document.getElementById('settings-dialog').close());
+  await page.waitForFunction(() => document.querySelector('.cm-content')?.innerText.includes('A quiet room.'));
+  const editor = await page.$('.cm-content');
+  await editor.focus();
+  await page.keyboard.press('ArrowLeft');
+  await page.evaluate(() => {
+    const node = document.querySelector('.cm-line').firstChild;
+    window.getSelection().setBaseAndExtent(node, 2, node, 7);
+  });
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+  await page.keyboard.down(modifier);
+  await page.keyboard.press('k');
+  await page.keyboard.up(modifier);
+  await page.waitForSelector('.passage-input');
+  await page.type('.passage-input', 'Give me a synonym.');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.cm-generation')?.textContent.includes('peaceful'));
+  assert.equal(fs.readFileSync(draft, 'utf8'), original);
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => document.querySelector('.cm-content')?.innerText.includes('A peaceful room.'));
+  const write = await fetch(url + '/write', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ document: '/Write an ending', from: 0, cursor: 16,
+      instruction: 'Write an ending', agent: { provider: 'claude-code', model: 'default' } }),
+  });
+  const stream = await write.text();
+  assert.match(stream, /The door closed/);
+  assert.match(stream, /\[DONE\]/);
   assert.deepEqual(errors, []);
-  console.log('Settings browser checks passed: first-run ChatGPT, unconnected provider key field, connect, remove.');
+  console.log('Settings browser checks passed: first-run ChatGPT, unconnected provider key field, connect, remove, Claude Pro recheck, passage preview/accept and streamed generation.');
 } finally {
   await browser.close();
   server.kill('SIGTERM');

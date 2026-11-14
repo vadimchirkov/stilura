@@ -38,6 +38,21 @@ DRAFT_FILE=./article.md STYLE_FILE=./style.md npx stilura
 
 Model requests send draft text to your selected provider.
 
+### Claude Code with Pro or Max
+
+Install [Claude Code](https://code.claude.com/docs/en/setup) and run
+`npm install -g @agentclientprotocol/claude-agent-acp` to install the local
+adapter. Run `claude auth login` and sign in with your subscription. In
+**Settings → Model**, select **Claude Code · Pro/Max**. If you signed in
+with the dialog already open, click **Check connection**.
+
+Both commands must be on the app’s PATH. If a desktop launch cannot find
+them, start Stilura from the terminal or set `STILURA_CLAUDE_CODE` and
+`STILURA_CLAUDE_ACP` to their absolute executable paths. Claude Code must
+report a Pro or Max session. Stilura uses it for passage changes, slash
+generation and manual continuations (`Cmd/Ctrl+Enter`). Requests use
+text-only agent sessions, with no tools, including MCP.
+
 ### Optional MCP connections
 
 Inline slash requests (`/your request`, then Enter) can use external tools over

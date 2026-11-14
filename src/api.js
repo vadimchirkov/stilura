@@ -7,6 +7,6 @@ export async function api(path, options = {}) {
   let data = {};
   try { data = raw ? JSON.parse(raw) : {}; }
   catch { data = { error: raw.slice(0, 200) || `HTTP ${response.status}` }; }
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { status: response.status });
   return data;
 }

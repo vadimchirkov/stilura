@@ -1,6 +1,6 @@
 {
   "name": "stilura",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "A local AI-assisted editor for sharper, more human writing",
   "keywords": [
     "writing",
@@ -32,6 +32,8 @@
     "brief.js",
     "chat-edits.js",
     "pi.js",
+    "claude-code.js",
+    "workspace-files.js",
     "mcp.js",
     "markdown.js",
     "review.js",

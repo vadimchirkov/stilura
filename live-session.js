@@ -100,6 +100,15 @@ export function documentSessions() {
       return get(filename);
     },
     listen(address) { url = address; for (const session of sessions.values()) session.advertise(url); },
+    // Before a document is renamed or trashed: end this server's session for
+    // it (and its claim on disk). Refuses when another server holds it.
+    release(filename) {
+      const file = documentStore(filename).read().path;
+      const other = readSessionAddress(file);
+      if (other && other.pid !== process.pid) throw Object.assign(new Error('This document is open in another Stilura server.'), { status: 409 });
+      sessions.get(file)?.close();
+      sessions.delete(file);
+    },
     close() { for (const session of sessions.values()) session.close(); },
   };
 }

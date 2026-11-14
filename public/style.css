@@ -2351,8 +2351,7 @@ html, body {
   box-decoration-break: clone;
   cursor: progress;
 }
-/* Focused editor: file navigation and conversation chrome are paused. */
-#sidebar, #sidebar-toggle, #sidebar-toggle-side, #sidebar-scrim,
+/* Focused editor: conversation chrome is paused. */
 #chat:not(.has-notice), #chat::before, #chat .chat-stream,
 #chat .chat-pill, #chat .chat-composer, #chat .chat-clear { display: none !important; }
 #chat { background: transparent; border: 0; box-shadow: none; backdrop-filter: none; }
@@ -2378,3 +2377,39 @@ body.focus-mode .editor-shortcuts { display: none; }
 #oauth-cancel { margin-top: 10px; }
 .device-code { font-family: ui-monospace, monospace; font-size: 16px; letter-spacing: .05em; color: var(--text); }
 .connect-signin .settings-hint { flex-basis: 100%; margin-top: 2px; }
+
+/* Quick switcher (Cmd/Ctrl+O): one search field over a short list of files. */
+.switcher {
+  width: min(560px, calc(100vw - 32px)); max-height: min(440px, 70vh); margin: 12vh auto auto; padding: 0;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--overlay); color: var(--text);
+  box-shadow: var(--shadow-lg); overflow: hidden;
+}
+.switcher[open] { display: flex; flex-direction: column; }
+.switcher::backdrop { background: rgba(0, 0, 0, .25); }
+.switcher-input {
+  flex: none; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--border-subtle);
+  background: transparent; color: var(--text); font: inherit; font-size: 15px; outline: none;
+}
+.switcher-list { overflow-y: auto; padding: 6px; }
+.switcher-item {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px;
+  background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.switcher-item[aria-selected="true"] { background: var(--surface-2); }
+@media (hover: hover) { .switcher-item:hover { background: var(--surface-2); } }
+.switcher-name { font-size: 14px; font-weight: 500; }
+.switcher-detail { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.switcher-item.is-create .switcher-name { color: var(--accent); }
+.switcher-empty { padding: 12px 10px; color: var(--muted); font-size: 13px; }
+
+/* File card actions: on hover or keyboard focus, never in the way of reading. */
+.file-list > li { position: relative; }
+.file-actions { position: absolute; top: 8px; right: 8px; display: none; gap: 4px; }
+.file-list > li:hover .file-actions, .file-list > li:focus-within .file-actions { display: flex; }
+.file-list > li.is-renaming .file-actions { display: none; }
+.file-action {
+  min-height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--r-pill);
+  background: var(--overlay); color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer;
+}
+@media (hover: hover) { .file-action:hover { color: var(--text); background: var(--surface-2); } }
+.file-rename { display: block; width: calc(100% - 16px); margin: 8px; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 4px; background: var(--surface); color: var(--text); font: inherit; }

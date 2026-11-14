@@ -48,7 +48,7 @@
         <button type="button" id="file-new"><span class="ph" data-icon="file-plus" aria-hidden="true"></span>New</button>
         <button type="button" id="file-open"><span class="ph" data-icon="upload-simple" aria-hidden="true"></span>Open a file…</button>
         <input id="file-input" type="file" accept=".md,.markdown,.txt,text/plain,text/markdown" hidden>
-        <button type="button" id="file-export"><span class="ph" data-icon="download-simple" aria-hidden="true"></span>Save as new…</button>
+        <button type="button" id="file-export"><span class="ph" data-icon="download-simple" aria-hidden="true"></span>Export a copy…</button>
         <button type="button" id="file-history"><span class="ph" data-icon="clock-counter-clockwise" aria-hidden="true"></span>History</button>
       </div>
       </div>
@@ -232,6 +232,11 @@
             <button type="button" id="connect-device">Use a device code</button>
             <p class="settings-hint">Uses your ChatGPT Plus or Pro plan. No API key needed. Use a device code if this computer can't open a browser.</p>
           </div>
+          <div id="connect-claude" hidden>
+            <p class="settings-hint" id="claude-connect-hint"></p>
+            <p class="settings-hint"><a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener noreferrer">Install Claude Code</a> · <a href="https://zed.dev/acp/agent/claude-agent" target="_blank" rel="noopener noreferrer">Claude ACP adapter</a></p>
+            <button type="button" id="claude-recheck">Check connection</button>
+          </div>
           <div id="connect-key" hidden>
             <label class="settings-label" for="api-key" id="api-key-label">API key</label>
             <div class="key-entry">
@@ -297,6 +302,7 @@
           <dt>Ask for text</dt><dd><kbd>/</kbd> then your request, <kbd>Enter</kbd></dd>
           <dt>Change selected text</dt><dd><kbd class="mod">⌘</kbd> <kbd>K</kbd></dd>
           <dt>Regenerate</dt><dd><kbd>R</kbd></dd>
+          <dt>Open or create a file</dt><dd><kbd class="mod">⌘</kbd> <kbd>O</kbd></dd>
           <dt>Focus mode</dt><dd><kbd class="mod">⌘</kbd> <kbd>.</kbd></dd>
         </dl>
       </section>

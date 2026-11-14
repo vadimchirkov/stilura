@@ -19,6 +19,7 @@ export function atParagraphEnd(state) {
 export function createSuggest({
   getView, docState, generating, statusShown, setSuggestStatus, slashRequest, ensureAgent,
   activeSuggestAgent, currentAgent, briefContext, startJob, finishJob, reportSuggestFailure,
+  backgroundAllowed = () => true,
   hidden = () => document.hidden,
   fetch = (...args) => globalThis.fetch(...args),
   timers = globalThis,
@@ -66,6 +67,7 @@ export function createSuggest({
 
   async function suggestFetch(manual = false) {
     suggestTimer = null;
+    if (!manual && !backgroundAllowed()) return;
     const view  = getView();
     const state = view.state;
     // The focus guard keeps background suggestions from firing while the writer

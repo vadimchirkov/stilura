@@ -44,6 +44,7 @@ import { createSuggest } from './features/suggest.js';
 import { setGenerationFx, generationField, slashRequest, requestField, createGenerate } from './features/generate.js';
 import { setPassageFx, createPassage } from './features/passage.js';
 import { createBubble } from './features/bubble.js';
+import { createSwitcher, newFileName } from './features/switcher.js';
 import { createNotices, modelError } from './notices.js';
 import { createEditorTheme, textSelection } from './editor/theme.js';
 import { BRIEF_STEPS, validateBriefQuestions, validateBriefUpdate } from '../brief.js';
@@ -78,6 +79,8 @@ const modelField    = document.getElementById('model-field');
 const thinkingField = document.getElementById('thinking-field');
 const connectRow    = document.getElementById('connect-row');
 const connectSignin = document.getElementById('connect-signin');
+const connectClaude = document.getElementById('connect-claude');
+const claudeProvider = 'claude-code';
 const connectKey    = document.getElementById('connect-key');
 const connectionLine = document.getElementById('connection-line');
 const settingsError = document.getElementById('settings-error');
@@ -256,6 +259,7 @@ function providerChoices() {
   for (const provider of agentInfo.authProviders) add(provider.id, provider.name, { key: provider });
   for (const provider of oauthInfo.supported) add(provider.id, provider.label ?? provider.name, { signin: provider, name: provider.label ?? provider.name });
   for (const provider of agentInfo.providers) add(provider.id, provider.name);
+  if (agentInfo.claudeCode) add(claudeProvider, 'Claude Code · Pro/Max');
   const choices = [...byId.values()].map(choice => ({ ...choice, connected: agentInfo.models.some(model => model.provider === choice.id) }));
   return choices.sort((a, b) => b.connected - a.connected || a.name.localeCompare(b.name));
 }
@@ -275,7 +279,8 @@ function renderModelSettings() {
   })), draftProvider ?? draftSelection?.provider);
   const provider = choices.find(choice => choice.id === fieldValue(providerEl));
   const connected = !!provider?.connected;
-  modelField.hidden = thinkingField.hidden = !connected;
+  modelField.hidden = !connected;
+  thinkingField.hidden = !connected || provider.id === claudeProvider;
   if (connected) {
     const models = agentInfo.models.filter(model => model.provider === provider.id);
     setOptions(modelEl, models.map(model => ({ value: model.model, label: model.name || model.model })), draftSelection?.model);
@@ -296,6 +301,12 @@ function renderConnection(provider) {
   const connected = !!provider?.connected;
   connectRow.hidden = !provider || connected;
   connectSignin.hidden = connectRow.hidden || !provider.signin;
+  connectClaude.hidden = connectRow.hidden || provider.id !== claudeProvider;
+  if (!connectClaude.hidden) {
+    document.getElementById('claude-connect-hint').textContent = agentInfo.claudeCode.installed
+      ? 'Run claude auth login in Terminal, sign in with Pro or Max, then check the connection.'
+      : 'Install Claude Code and claude-agent-acp, then sign in from Terminal.';
+  }
   connectKey.hidden = connectRow.hidden || !!provider.signin || !provider.key;
   if (!connectKey.hidden) {
     apiKeyEl.placeholder = provider.key.label ?? 'API key';
@@ -303,13 +314,15 @@ function renderConnection(provider) {
     document.getElementById('api-key-hint').textContent = `Stored on this computer. Sent only to ${provider.name}.`;
   }
   const line = [];
-  if (connected && provider.signin?.configured) {
+  if (connected && provider.id === claudeProvider) {
+    line.push(`Connected through Claude Code · ${agentInfo.claudeCode.plan === 'max' ? 'Max' : 'Pro'}. Use Cmd/Ctrl+Enter to request a continuation.`);
+  } else if (connected && provider.signin?.configured) {
     line.push(`Signed in to ${provider.name}. `, linkButton('Sign out', `Sign out of ${provider.name}`, () => removeProviderKey(provider.id)));
   } else if (connected && provider.key?.configured && provider.key.source !== 'environment') {
     line.push('Connected with an API key. ', removeKeyButton(provider));
   } else if (connected) {
     line.push(provider.key?.source === 'environment' ? 'Connected with a key from the environment.' : 'Connected.');
-  } else if (provider && !provider.signin && !provider.key) {
+  } else if (provider && !provider.signin && !provider.key && provider.id !== claudeProvider) {
     line.push('This provider is configured outside Stilura.');
   }
   connectionLine.replaceChildren(...line);
@@ -444,6 +457,18 @@ async function openSettings(tab) {
 }
 
 settingsOpen.addEventListener('click', openSettings);
+document.getElementById('claude-recheck').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  settingsError.textContent = '';
+  try {
+    await refreshAgent();
+    if (fieldValue(providerEl) !== claudeProvider) return;
+    selectProvider(claudeProvider);
+    if (!agentInfo.claudeCode?.plan) settingsError.textContent = 'Claude Code is not connected to a Pro or Max account.';
+  } catch (error) { settingsError.textContent = error.message; }
+  finally { button.disabled = false; }
+});
 // transitions-dev modal close (06-modal.md): play .is-closing (150ms) before
 // .close() so exit mirrors enter; Escape stays instant (native), class is
 // cleaned on 'close'. Timing reads --modal-close-dur to stay in sync with CSS.
@@ -799,6 +824,7 @@ const { cancelSuggestion, suggestSchedule, suggestionUpdate, suggestFetch, pendi
   slashRequest: state => slashRequest(state),
   ensureAgent: () => ensureAgent(),
   activeSuggestAgent: () => activeSuggestAgent(),
+  backgroundAllowed: () => currentAgent()?.provider !== claudeProvider,
   currentAgent: () => currentAgent(),
   briefContext: () => briefContext(),
   startJob: options => startJob(options),
@@ -3076,9 +3102,38 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('beforeunload', event => {
   if (!docState.loadingDocument && (docState.saving || workView.state.doc.toString() !== docState.diskText)) { event.preventDefault(); event.returnValue = ''; }
 });
-document.getElementById('file-new').addEventListener('click', () => {
-  if (workView.state.doc.length) replaceDraft('', 'New document — the old text is in History');
-  workView.focus();
+// A free name in the folder: "Untitled.md", then "Untitled 2.md", …
+function freeFileName(base, extension = '.md') {
+  const taken = new Set(sidebarFiles.map(file => file.name.toLowerCase()));
+  for (let n = 1; ; n++) {
+    const name = `${base}${n > 1 ? ` ${n}` : ''}${extension}`;
+    if (!taken.has(name.toLowerCase())) return name;
+  }
+}
+// Creates a new file and never overwrites one: the server refuses an
+// existing name (409), and the next free name is tried instead.
+async function createFile(base, extension, text) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const name = freeFileName(base, extension);
+    try {
+      await api('/file', { method: 'PUT', body: JSON.stringify({ name, text }) });
+      await refreshFileList();
+      return name;
+    } catch (error) {
+      if (error.status !== 409) throw error;
+      await refreshFileList();
+    }
+  }
+  throw new Error('No free file name');
+}
+// New and import add a file to the folder and open it. The open draft is
+// saved and left as it is, never replaced.
+document.getElementById('file-new').addEventListener('click', async () => {
+  try {
+    const name = await createFile('Untitled', '.md', '');
+    await switchDocument(name);
+    workView.focus();
+  } catch (error) { notify(`Unable to create a file: ${error.message}`, { sticky: true }); }
 });
 document.getElementById('file-export').addEventListener('click', async () => {
   try {
@@ -3110,12 +3165,14 @@ async function importFile(file) {
     return;
   }
   try {
+    // A copy of the file joins the folder under its own name (or the next
+    // free one) and opens, flowing like any sidebar file. The open draft is
+    // saved and left as it is.
     const text = await file.text();
-    // Hard-wrapped imports open flowing, same as sidebar files — the Undo in
-    // the notice puts the exact bytes back.
-    const opened = unwrapProse(text);
-    replaceDraft(opened.text, opened.joined > 0 ? `Imported ${file.name} — ${opened.joined} wrapped lines joined` : `Imported ${file.name}`);
-    refreshFileList();
+    const extension = file.name.match(/\.(md|markdown|txt)$/i)[0].toLowerCase();
+    const base = file.name.slice(0, -extension.length).replace(/[\\/]/g, ' ').trim() || 'Imported';
+    const name = await createFile(base, extension, text);
+    await switchDocument(name);
   } catch (error) { notify(`Unable to open ${file.name}: ${error.message}. Your draft is unchanged.`, { sticky: true, action: () => importFile(file), label: 'Try again' }); }
 }
 // ─── File sidebar ────────────────────────────────────────────────────────────
@@ -3221,9 +3278,119 @@ function renderFileList() {
       switchDocument(file.name);
     });
     item.append(row);
+    // The home draft is where Stilura opens, so it keeps its name and stays.
+    if (!file.home) item.append(fileActions(file, item));
     fileList.append(item);
   }
 }
+// Rename and Delete stand on the card, shown on hover and keyboard focus.
+function fileActions(file, item) {
+  const actions = chatEl('span', 'file-actions');
+  const rename = chatEl('button', 'file-action', 'Rename');
+  rename.type = 'button';
+  rename.title = `Rename ${file.name}`;
+  rename.addEventListener('click', () => startRename(file, item));
+  const remove = chatEl('button', 'file-action', 'Delete');
+  remove.type = 'button';
+  remove.title = `Move ${file.name} to the trash`;
+  remove.addEventListener('click', () => deleteFile(file.name));
+  actions.append(rename, remove);
+  return actions;
+}
+
+// Renaming happens in place: Enter keeps the new name, Escape or leaving
+// the field keeps the old one.
+function startRename(file, item) {
+  const input = chatEl('input', 'file-rename');
+  Object.assign(input, { type: 'text', value: file.name, spellcheck: false });
+  input.setAttribute('aria-label', `New name for ${file.name}`);
+  item.classList.add('is-renaming');
+  // The field stands in for the card, not inside it: keys typed into a
+  // field inside a button would press the button.
+  item.querySelector('.file-card').hidden = true;
+  item.prepend(input);
+  input.focus();
+  input.setSelectionRange(0, file.name.replace(/\.(md|markdown|txt)$/i, '').length);
+  let done = false;
+  const finish = async commit => {
+    if (done) return;
+    done = true;
+    const to = commit ? newFileName(input.value) : null;
+    if (!to || to === file.name) { renderFileList(); return; }
+    await renameFile(file.name, to);
+  };
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(false));
+}
+
+// Browser-side copies (working text, chat, notes, brief) are stored under
+// the document's id, which follows its path: move them with the rename.
+function moveDocumentStorage(previousId, id) {
+  const from = `stilura:${previousId}:`, to = `stilura:${id}:`;
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(from)) keys.push(key);
+  }
+  for (const key of keys) {
+    localStorage.setItem(to + key.slice(from.length), localStorage.getItem(key));
+    localStorage.removeItem(key);
+  }
+}
+
+async function renameFile(name, to) {
+  const rename = async () => {
+    const result = await api('/file/rename', { method: 'POST', body: JSON.stringify({ name, to }) });
+    moveDocumentStorage(result.previousId, result.id);
+    return result;
+  };
+  try {
+    if (name !== docState.documentName) {
+      await rename();
+      await refreshFileList();
+    } else {
+      // The open file: save it, let go of its live session, move it, then
+      // open it again under the new name.
+      await switchDocument(to, { before: async () => {
+        liveSync?.close();
+        try { await rename(); }
+        catch (error) { liveSync?.connect(await api(draftUrl())); throw error; }
+      } });
+      await refreshFileList();
+    }
+    notify(`Renamed to ${to}.`);
+  } catch (error) {
+    notify(`Unable to rename ${name}: ${error.message}`, { sticky: true });
+    renderFileList();
+  }
+}
+
+// Deleting moves the file and its notes and history to the folder's .trash/;
+// Undo brings them back. The open file is left first, for the home draft.
+async function deleteFile(name) {
+  const wasOpen = name === docState.documentName;
+  try {
+    if (wasOpen) {
+      const home = sidebarFiles.find(file => file.home)?.name;
+      if (!home) throw new Error('The home draft is missing.');
+      await switchDocument(home);
+      if (docState.documentName === name) return; // the switch was refused; its notice says why
+    }
+    const { trashed } = await api(`/file?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+    await refreshFileList();
+    notify(`Moved ${name} to the trash.`, { label: 'Undo', action: async () => {
+      try {
+        await api('/file/restore', { method: 'POST', body: JSON.stringify({ trashed }) });
+        await refreshFileList();
+        if (wasOpen) await switchDocument(name);
+      } catch (error) { notify(`Unable to restore ${name}: ${error.message}`, { sticky: true }); }
+    } });
+  } catch (error) { notify(`Unable to delete ${name}: ${error.message}`, { sticky: true }); }
+}
+
 async function refreshFileList() {
   try {
     const { files } = await api('/files');
@@ -3235,8 +3402,10 @@ async function refreshFileList() {
 // it. The previous file is untouched: its disk copy keeps whatever was last
 // saved, and its browser copy, chat waits under their own storage
 // key until it is opened again.
-async function switchDocument(name) {
-  if (docState.loadingDocument || docState.switchingDocument || docState.desktopSaving || name === docState.documentName) { workView.focus(); return; }
+// `before` runs once the open file is saved and before the next one opens:
+// renaming the open file uses it to move the file in between.
+async function switchDocument(name, { before } = {}) {
+  if (docState.loadingDocument || docState.switchingDocument || docState.desktopSaving || (name === docState.documentName && !before)) { workView.focus(); return; }
   docState.switchingDocument = true;
   editorSetReadonly(workView, true);
   for (const job of jobs) job.abort();
@@ -3263,6 +3432,10 @@ async function switchDocument(name) {
   }
   docState.autosaveHold = false;   // moving on ends the deleted-file episode
   let current;
+  if (before) {
+    try { await before(); }
+    catch (error) { notify(error.message, { sticky: true, key: 'disk' }); return; }
+  }
   try {
     current = await api('/draft/open', { method: 'POST', body: JSON.stringify({ name }) });
   } catch (error) { notify(`Unable to open ${name}: ${error.message}. The current draft stays open.`, { sticky: true, action: () => switchDocument(name), label: 'Try again' }); return; }
@@ -3368,6 +3541,28 @@ document.getElementById('file-history').addEventListener('click', async () => {
       'Last 20 disk versions and 10 browser checkpoints. Disk copies sit beside the draft in .stilura-history and are never deleted automatically.'));
   } catch (error) { list.append(chatEl('p', 'history-note', error.message)); }
 });
+
+// ─── Quick switcher ─── (src/features/switcher.js)
+async function createNamedFile(name) {
+  const extension = name.match(/\.(md|markdown|txt)$/i)[0];
+  try {
+    await switchDocument(await createFile(name.slice(0, -extension.length), extension.toLowerCase(), ''));
+    workView.focus();
+  } catch (error) { notify(`Unable to create ${name}: ${error.message}`, { sticky: true }); }
+}
+const switcher = createSwitcher({
+  files: () => sidebarFiles,
+  refresh: () => refreshFileList(),
+  open: name => { if (name !== docState.documentName) switchDocument(name); workView.focus(); },
+  create: createNamedFile,
+});
+// Cmd/Ctrl+O, from anywhere: the browser's own "open file" would load a
+// file in place of the app.
+document.addEventListener('keydown', event => {
+  if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 'o') return;
+  event.preventDefault();
+  if (!switcher.open && !settingsDialog.open) switcher.show();
+}, true);
 
 // ─── Focus mode ─── (src/editor/focus.js)
 // Remembered per browser like the theme. The shortcut hints go too: in focus

@@ -29,6 +29,10 @@ export function modelError(error) {
   if (/failed to fetch|networkerror|load failed/i.test(detail)) {
     return { say: 'Stilura stopped answering.', act: 'retry', detail };
   }
+  const claudeLimit = /you've hit your session limit(?:\s*·\s*resets (.+))?/i.exec(detail);
+  if (claudeLimit) {
+    return { say: `Claude session limit reached${claudeLimit[1] ? ` · resets ${claudeLimit[1]}` : '.'}`, act: 'retry', detail };
+  }
   const status = Number(/^(?:HTTP |Server error )?([45]\d\d)\b/.exec(detail)?.[1]);
   // Providers say how long to wait ("try again in 14.16s"); that number is the
   // one useful thing in a rate-limit payload.

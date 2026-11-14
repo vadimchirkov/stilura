@@ -20,6 +20,7 @@ import { buildSystemPrompt, requestRewrite, readStyle, NO_SLOP, STYLE_FILE } fro
 import { generationText, insertionText, markSelection } from './review.js';
 import { documentStore, MAX_DOCUMENT_BYTES } from './document-store.js';
 import { documentSessions } from './live-session.js';
+import { renameDocument, trashDocument, restoreDocument } from './workspace-files.js';
 import { requestSuggestion } from './suggestions.js';
 import { CHAT_EDITS_PROMPT, chatVisibleText, parseChatResponse } from './chat-edits.js';
 import { desktopBridge } from './desktop.js';
@@ -137,6 +138,7 @@ catch (error) {
 // identifies that tab's document without changing other tabs' save targets.
 const WORKSPACE_EXTENSIONS = new Set(['.md', '.markdown', '.txt']);
 const FILES_DIR = path.dirname(path.resolve(DRAFT_FILE));
+const HOME_DRAFT = path.resolve(DRAFT_FILE);
 function workspaceFile(name) {
   if (typeof name !== 'string' || !name || name.includes('\0')) return null;
   if (path.basename(name) !== name) return null;
@@ -263,7 +265,7 @@ function readBody(req) {
       try {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Expected a JSON object');
-        for (const key of ['text', 'revision', 'document', 'selected', 'target', 'context', 'brief', 'idea', 'instruction', 'previous', 'selection', 'provider', 'apiKey', 'name', 'method', 'code']) {
+        for (const key of ['text', 'revision', 'document', 'selected', 'target', 'context', 'brief', 'idea', 'instruction', 'previous', 'selection', 'provider', 'apiKey', 'name', 'to', 'trashed', 'method', 'code']) {
           if (body[key] !== undefined && typeof body[key] !== 'string') throw new Error(`${key} must be a string`);
         }
         if (body.document && Buffer.byteLength(body.document) > MAX_DOCUMENT_BYTES) throw new Error('Document exceeds 1 MB');
@@ -494,7 +496,7 @@ async function handleRequest(req, res) {
             excerpt = cardExcerpt(buf.subarray(0, n).toString('utf8').replace(/\uFFFD+$/g, ''));
           } finally { fs.closeSync(fd); }
         } catch { excerpt = ''; }
-        files.push({ name: entry.name, size: stats.size, mtime: stats.mtime.toISOString(), excerpt });
+        files.push({ name: entry.name, size: stats.size, mtime: stats.mtime.toISOString(), excerpt, ...(full === HOME_DRAFT ? { home: true } : {}) });
       } catch { /* raced deletion — skip */ }
     }
     files.sort((a, b) => a.name.localeCompare(b.name));
@@ -515,19 +517,40 @@ async function handleRequest(req, res) {
     sendJson(res, 200, { ...current, name: path.basename(file) });
     return;
   }
-  // DELETE /file — remove a workspace file by basename. Returns like GET
-  // when the name is bad or the file is gone; the caller keeps whatever it
-  // needs for Undo, the server keeps nothing.
+  // DELETE /file — move a workspace file, with its notes and history, into
+  // the folder's .trash/. The home draft stays: it is where Stilura opens.
   if (req.method === 'DELETE' && url.pathname === '/file') {
     const file = workspaceFile(url.searchParams.get('name'));
     if (!file) { sendJson(res, 400, { error: 'Delete a Markdown or text file by name.' }); return; }
-    try { fs.unlinkSync(file); }
-    catch (error) {
-      const missing = error.code === 'ENOENT';
-      sendJson(res, missing ? 404 : 500, { error: missing ? 'File no longer exists.' : fsErrorMessage(error) });
-      return;
-    }
-    sendJson(res, 200, { deleted: true, name: path.basename(file) });
+    if (file === HOME_DRAFT) { sendJson(res, 400, { error: 'The home draft cannot be deleted.' }); return; }
+    try {
+      sessions.release(file);
+      sendJson(res, 200, { deleted: true, name: path.basename(file), trashed: trashDocument(file) });
+    } catch (error) { sendJson(res, error.status || 500, { error: error.status ? error.message : fsErrorMessage(error) }); }
+    return;
+  }
+  // POST /file/restore — put a trashed file back under its own name.
+  if (req.method === 'POST' && url.pathname === '/file/restore') {
+    try {
+      const body = await readBody(req);
+      sendJson(res, 200, { name: restoreDocument(FILES_DIR, String(body.trashed ?? '')) });
+    } catch (error) { sendJson(res, error.status || 500, { error: error.status ? error.message : fsErrorMessage(error) }); }
+    return;
+  }
+  // POST /file/rename — rename a workspace file with its notes and history.
+  // Never overwrites: an existing target is refused.
+  if (req.method === 'POST' && url.pathname === '/file/rename') {
+    try {
+      const body = await readBody(req);
+      const from = workspaceFile(String(body.name ?? '')), to = workspaceFile(String(body.to ?? ''));
+      if (!from || !to) { sendJson(res, 400, { error: 'Use a Markdown or text file name, without folders.' }); return; }
+      if (from === HOME_DRAFT) { sendJson(res, 400, { error: 'The home draft keeps its name.' }); return; }
+      if (from === to) { sendJson(res, 200, { name: path.basename(to), ...documentStore(to).read() }); return; }
+      sessions.release(from);
+      renameDocument(from, to);
+      const current = documentStore(to).read();
+      sendJson(res, 200, { name: path.basename(to), id: current.id, previousId: documentStore(from).read().id });
+    } catch (error) { sendJson(res, error.status || 500, { error: error.status ? error.message : fsErrorMessage(error) }); }
     return;
   }
   // Without a revision this only creates a missing file (including Undo).
