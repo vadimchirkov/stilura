@@ -189,13 +189,35 @@
         <div class="settings-panel" id="settings-panel" role="tabpanel">
 
       <section data-tab="models">
-        <h3>Writing model</h3>
+        <div class="guided-steps" id="guided-steps" hidden aria-label="Setup progress">
+          <span class="guided-step" data-step="1">1. Pick</span>
+          <span class="guided-step" data-step="2">2. Connect</span>
+          <span class="guided-step" data-step="3">3. Ready</span>
+        </div>
+        <h3 id="writing-model-heading">Connect your writing assistant</h3>
         <p class="settings-hint settings-lead" id="model-lead">Used for continuations, / requests and passage rewrites.</p>
+        <div class="guided-back-row" id="guided-back-row" hidden>
+          <button type="button" id="guided-back" class="guided-back">← Back</button>
+        </div>
+        <div class="model-services" role="group" aria-label="Connection options">
+          <button type="button" id="service-chatgpt" class="model-service">
+            <span class="model-service-icon"><img src="/icons/openai.svg" alt=""></span>
+            <span><strong>ChatGPT</strong><small>Plus or Pro</small></span>
+          </button>
+          <button type="button" id="service-claude" class="model-service" aria-controls="connect-claude" aria-expanded="false">
+            <span class="model-service-icon"><img src="/icons/claude.svg" alt=""></span>
+            <span><strong>Claude Code</strong><small>Claude Pro or Max</small></span>
+          </button>
+          <button type="button" id="service-api" class="model-service" aria-controls="api-model-settings" aria-expanded="false">
+            <span class="model-service-icon" aria-hidden="true">⚿</span>
+            <span><strong>API key</strong><small>Choose a provider</small></span>
+          </button>
+        </div>
         <!-- Hundreds of models behind one field. A native datalist cannot do
              it: its popup never reaches the top layer over a modal dialog, and
              a pre-filled value means typing filters against the old answer. -->
-        <div class="settings-grid">
-          <div class="settings-field">
+        <div class="settings-grid" id="api-model-settings" hidden>
+          <div class="settings-field" id="provider-field">
             <span class="settings-label" id="provider-label">Provider</span>
             <button type="button" class="combo-trigger" id="agent-provider" popovertarget="provider-combo" aria-haspopup="listbox" aria-labelledby="provider-label agent-provider">
               <span class="combo-value"></span>
@@ -234,7 +256,8 @@
           </div>
           <div id="connect-claude" hidden>
             <p class="settings-hint" id="claude-connect-hint"></p>
-            <p class="settings-hint"><a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener noreferrer">Install Claude Code</a> · <a href="https://zed.dev/acp/agent/claude-agent" target="_blank" rel="noopener noreferrer">Claude ACP adapter</a></p>
+            <div id="claude-command" class="claude-command" hidden><code>claude auth login</code><button type="button" id="claude-copy" class="copy-inline">Copy</button></div>
+            <p id="claude-install" class="settings-hint"><a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener noreferrer">Install Claude Code</a> · <a href="https://zed.dev/acp/agent/claude-agent" target="_blank" rel="noopener noreferrer">Claude ACP adapter</a></p>
             <button type="button" id="claude-recheck">Check connection</button>
           </div>
           <div id="connect-key" hidden>
@@ -251,7 +274,13 @@
           <div id="oauth-flow" hidden>
           <p class="settings-hint" id="oauth-status" role="status"></p>
           <p class="settings-hint" id="oauth-url-wrap" hidden>Tab didn't open? <a id="oauth-url" href="#" target="_blank" rel="noopener">Open the sign-in page</a>.</p>
-          <p class="settings-hint" id="oauth-device-wrap" hidden>Go to <a id="oauth-device-link" href="#" target="_blank" rel="noopener">the verification page</a> and enter <strong class="device-code" id="oauth-device-code"></strong></p>
+          <div class="settings-hint" id="oauth-device-wrap" hidden>
+            <p>Go to <a id="oauth-device-link" href="#" target="_blank" rel="noopener">the verification page</a> and enter this code:</p>
+            <div class="device-code-row">
+              <strong class="device-code" id="oauth-device-code"></strong>
+              <button type="button" id="oauth-copy-code" class="copy-inline">Copy code</button>
+            </div>
+          </div>
           <div id="oauth-paste-wrap" hidden>
             <details class="oauth-paste">
               <summary>Signed in but nothing happened?</summary>
@@ -262,11 +291,19 @@
                 <button type="button" id="oauth-send">Finish sign-in</button>
               </div>
             </details>
-            <button type="button" id="oauth-cancel">Cancel</button>
           </div>
+          <button type="button" id="oauth-cancel">Cancel</button>
         </div>
         </div>
+        <div id="chat-service-action" class="chat-service-action" hidden></div>
         <p class="settings-hint connection-line" id="connection-line"></p>
+        <div class="guided-ready" id="guided-ready" hidden>
+          <div>
+            <strong>Ready to write</strong>
+            <p class="settings-hint">Your assistant is connected. Press <kbd class="mod">⌘</kbd> <kbd>Enter</kbd> or <kbd>Tab</kbd> in the editor.</p>
+          </div>
+          <button type="button" id="guided-done" class="connect-primary">Start writing</button>
+        </div>
         <p class="settings-hint" id="model-hint"></p>
         <p class="settings-error" id="settings-error" role="alert"></p>
       </section>

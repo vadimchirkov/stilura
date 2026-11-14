@@ -1,7 +1,7 @@
 import { EditorView, showTooltip } from '@codemirror/view';
 import { StateEffect, StateField } from '@codemirror/state';
 import { distinctVariants, rewriteInstruction } from '../../extension/writing-rules.js';
-import { createPassageInput } from '../../extension/editor-ui.js';
+import { createPassageInput, rememberPassageRequest } from '../../extension/editor-ui.js';
 import { mapChatEdit } from '../../chat-edits.js';
 import { ghostClear } from '../editor/ghost.js';
 import { modelError } from '../notices.js';
@@ -15,10 +15,17 @@ import { generationField, setGenerationFx } from './generate.js';
 export const setPassageFx = StateEffect.define();
 
 export function createPassage({
-  jobs, docState, cancelSuggestion, combinedContext, currentAgent, ensureAgent,
+  jobs, docState, storage, cancelSuggestion, combinedContext, currentAgent, ensureAgent,
   startJob, finishJob, notify, notifyProblem, fetch = (...args) => globalThis.fetch(...args),
 }) {
   let passageJob = null;
+  const historyKey = 'wa-passage-requests';
+  const history = () => {
+    try {
+      const saved = JSON.parse(storage?.getItem(historyKey) ?? '[]');
+      return Array.isArray(saved) ? saved.filter(entry => typeof entry === 'string' && entry.length <= 4000) : [];
+    } catch { return []; }
+  };
   // The draft cannot be saved: it is loading, or saving is paused.
   const paused = () => docState.loadingDocument || docState.savePaused;
   const passageField = StateField.define({
@@ -62,9 +69,16 @@ export function createPassage({
   }
 
   function passageTooltip(view) {
+    const { quote } = view.state.field(passageField);
+    const hintRequest = new AbortController();
     const { dom, input, fit } = createPassageInput({
+      selected: quote, history,
+      remember: value => {
+        try { storage?.setItem(historyKey, JSON.stringify(rememberPassageRequest(history(), value))); } catch {}
+      },
       onSubmit: () => { void requestPassage(view); },
       onChange: instruction => {
+        hintRequest.abort();
         const value = view.state.field(passageField);
         if (value && !value.busy) view.dispatch({ effects: setPassageFx.of({ ...value, instruction, answer: '' }) });
       },
@@ -90,8 +104,25 @@ export function createPassage({
     render();
     return {
       dom, update: render,
-      mount: () => { document.addEventListener('pointerdown', outside, true); queueMicrotask(() => { fit(); input.focus(); }); },
-      destroy: () => document.removeEventListener('pointerdown', outside, true),
+      mount() {
+        document.addEventListener('pointerdown', outside, true);
+        queueMicrotask(() => { if (dom.isConnected) { fit(); input.focus(); } });
+        const agent = currentAgent();
+        if (!agent || !quote.trim() || quote.length > 10000) return;
+        fetch('/passage-hint', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: hintRequest.signal,
+          body: JSON.stringify({ selected: quote, agent }),
+        }).then(response => response.ok ? response.json() : null).then(result => {
+          if (result?.hint && !hintRequest.signal.aborted && dom.isConnected && !input.value) {
+            input.placeholder = result.hint;
+            fit();
+          }
+        }).catch(() => {});
+      },
+      destroy() {
+        hintRequest.abort();
+        document.removeEventListener('pointerdown', outside, true);
+      },
     };
   }
 

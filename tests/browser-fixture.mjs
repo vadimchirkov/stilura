@@ -20,6 +20,9 @@ export async function submitOAuthCode() { throw Error('Fixture does not sign in'
 export async function cancelOAuth() { return { active: null }; }
 export async function completeText({systemPrompt, userPrompt, signal}) {
   await new Promise((resolve,reject) => { const timer=setTimeout(resolve, 300); signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(signal.reason)}, {once:true}); });
+  if (systemPrompt.startsWith('Suggest one short editing request')) {
+    return JSON.parse(userPrompt).passage.includes('quiet') ? 'What breaks the quiet?' : 'NONE';
+  }
   if (systemPrompt.includes('Help with the SELECTED TEXT')) {
     const selected = userPrompt.split('SELECTED TEXT:\\n')[1].split('\\n\\nREQUEST:')[0];
     if (/synonym|replace|rewrite/i.test(userPrompt.split('REQUEST:\\n')[1].split('\\n\\nDRAFT')[0])) return '<stilura-edits>' + JSON.stringify(['peaceful', 'tranquil', 'silent'].map(replacement=>({label:'Alternative',quote:selected,replacement}))) + '</stilura-edits>';

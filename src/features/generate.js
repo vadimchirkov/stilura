@@ -29,27 +29,76 @@ export const generationField = StateField.define({
   },
 });
 
+// Keep the slash the writer typed, even if the line already contains another slash.
+const typedSlash = StateField.define({
+  create: () => null,
+  update(from, tr) {
+    if (!tr.docChanged) return from;
+    if (from !== null) from = tr.changes.mapPos(from, 1);
+    if (tr.isUserEvent('input.type') && tr.newSelection.main.empty) {
+      const caret = tr.newSelection.main.head;
+      const line = tr.newDoc.lineAt(caret);
+      if (line.text.endsWith('//') && from === caret - 2) return null;
+      if (caret === line.to && !line.text.endsWith('//') && (from === null || from < line.from || from >= line.to)) {
+        tr.changes.iterChanges((_from, _to, start, end, text) => {
+          if (end === caret && text.toString() === '/') from = start;
+        });
+      }
+    }
+    return from !== null && tr.newDoc.sliceString(from, from + 1) === '/' ? from : null;
+  },
+});
+
 export function slashRequest(state) {
   const line = state.doc.lineAt(state.selection.main.head);
+  const from = state.field(typedSlash, false);
+  if (from != null && from >= line.from && from < line.to) {
+    const text = line.text.slice(from - line.from);
+    return { from, to: line.to, text, instruction: text.slice(1).trim(), inline: !!line.text.slice(0, from - line.from).trim() };
+  }
   return slashCommand(line.text, line.from);
 }
 
-const hiddenSlash = Decoration.replace({});
+class RequestTail extends WidgetType {
+  toDOM() {
+    const tail = document.createElement('span');
+    tail.className = 'cm-request-tail';
+    tail.setAttribute('aria-hidden', 'true');
+    return tail;
+  }
+}
 
-// The slash only opens the request; it stays in the text (Backspace removes
-// it and ends the request) but is not drawn. The background is the cue.
+const hiddenSlash = Decoration.replace({});
+const requestMark = Decoration.mark({ class: 'cm-generation-request' });
+const requestLine = Decoration.line({ class: 'cm-generation-request' });
+const inlineRequestLine = Decoration.line({ class: 'cm-inline-request' });
+const requestTail = Decoration.widget({ widget: new RequestTail(), side: 1 });
+
+export function waitingForSlash(generation) {
+  return generation?.source !== 'passage' && generation?.phase === 'streaming'
+    && !generation.text && generation.previousText == null;
+}
+
 function requestDecorations(state) {
-  if (state.field(generationField, false)) return Decoration.none;
-  const request = slashRequest(state);
+  const generation = state.field(generationField, false);
+  const waiting = waitingForSlash(generation);
+  if (generation && !waiting) return Decoration.none;
+  const request = waiting ? generation : slashRequest(state);
   if (!request) return Decoration.none;
-  const decorations = [hiddenSlash.range(request.from, request.from + 1)];
-  if (request.to > request.from + 1) decorations.push(Decoration.mark({ class: 'cm-generation-request' }).range(request.from + 1, request.to));
-  else if (!request.inline) decorations.push(Decoration.line({ class: 'cm-generation-request' }).range(state.doc.lineAt(request.from).from));
-  return Decoration.set(decorations, true);
+  const line = state.doc.lineAt(request.from);
+  const loading = waiting ? [Decoration.line({ class: 'cm-slash-loading', attributes: { 'aria-busy': 'true' } }).range(line.from)] : [];
+  if (request.inline) {
+    const decorations = [...loading, inlineRequestLine.range(line.from), hiddenSlash.range(request.from, request.from + 1),
+      requestTail.range(request.to)];
+    if (request.to > request.from + 1) decorations.push(requestMark.range(request.from + 1, request.to));
+    return Decoration.set(decorations, true);
+  }
+  return Decoration.set([...loading, requestLine.range(line.from), hiddenSlash.range(request.from, request.from + 1)], true);
 }
 export const requestField = StateField.define({
   create: requestDecorations,
   update: (value, tr) => tr.docChanged || tr.selection || tr.effects.some(effect => effect.is(setGenerationFx)) ? requestDecorations(tr.state) : value,
+  provide: () => typedSlash,
 });
 
 

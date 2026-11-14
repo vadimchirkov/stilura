@@ -6,12 +6,12 @@ import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 
 export const CLAUDE_CODE = 'claude-code';
-export const claudeModel = {
-  provider: CLAUDE_CODE, model: 'default', name: 'Claude Code default',
-  reasoning: false, thinkingLevels: ['off'],
-};
+export const claudeModels = [
+  ['default', 'Claude Code default'], ['sonnet', 'Claude Sonnet'],
+  ['opus', 'Claude Opus'], ['haiku', 'Claude Haiku'],
+].map(([model, name]) => ({ provider: CLAUDE_CODE, model, name, reasoning: false, thinkingLevels: ['off'] }));
 
-function executable(name, override) {
+function* executables(name, override) {
   const candidates = override ? [override] : (process.env.PATH ?? '').split(path.delimiter)
     .filter(directory => path.isAbsolute(directory))
     .map(directory => path.join(directory, process.platform === 'win32' ? name + '.exe' : name));
@@ -19,17 +19,22 @@ function executable(name, override) {
     try {
       if (!path.isAbsolute(file) || !statSync(file).isFile()) continue;
       accessSync(file, constants.X_OK);
-      return file;
+      yield file;
     } catch {}
   }
-  return null;
 }
 
-function commands() {
-  return {
-    claude: executable('claude', process.env.STILURA_CLAUDE_CODE),
-    adapter: executable('claude-agent-acp', process.env.STILURA_CLAUDE_ACP),
-  };
+async function commands(signal) {
+  const adapter = executables('claude-agent-acp', process.env.STILURA_CLAUDE_ACP).next().value;
+  let installed = false;
+  for (const claude of executables('claude', process.env.STILURA_CLAUDE_CODE)) {
+    installed = Boolean(adapter);
+    if (!adapter) break;
+    const plan = await subscription(claude, signal);
+    // An older npm shim can shadow a working Claude install and crash.
+    if (plan !== undefined) return { installed, claude, adapter, plan };
+  }
+  return { installed, plan: null };
 }
 
 // Inherit account discovery and OS settings, without API keys, proxy endpoints or cloud routing overrides.
@@ -48,22 +53,24 @@ async function subscription(claude, signal) {
     if (status.loggedIn && status.apiProvider === 'firstParty' && status.authMethod === 'claude.ai' && ['pro', 'max'].includes(status.subscriptionType)) {
       return status.subscriptionType;
     }
+    return null;
   } catch {
     signal?.throwIfAborted();
+    return undefined;
   }
-  return null;
 }
 
 export async function claudeCodeStatus() {
-  const { claude, adapter } = commands();
-  return { installed: Boolean(claude && adapter), plan: claude && adapter ? await subscription(claude) : null };
+  const { installed, plan } = await commands();
+  return { installed, plan };
 }
 
-export async function askClaudeCode({ systemPrompt, userPrompt, messages, signal, onText }) {
+export async function askClaudeCode({ systemPrompt, userPrompt, messages, model = 'default', signal, onText }) {
+  if (!claudeModels.some(choice => choice.model === model)) throw new Error('Unknown Claude Code model.');
   signal?.throwIfAborted();
-  const { claude, adapter } = commands();
-  if (!claude || !adapter) throw new Error('Install Claude Code and claude-agent-acp, then check the connection in Settings.');
-  if (!await subscription(claude, signal)) throw new Error('Run claude auth login and sign in with Claude Pro or Max.');
+  const { claude, adapter, plan, installed } = await commands(signal);
+  if (!installed) throw new Error('Install Claude Code and claude-agent-acp, then check the connection in Settings.');
+  if (!plan) throw new Error('Run claude auth login and sign in with Claude Pro or Max.');
   signal?.throwIfAborted();
   signal = AbortSignal.any([signal, AbortSignal.timeout(120000)].filter(Boolean));
   const cwd = tmpdir();
@@ -119,6 +126,7 @@ export async function askClaudeCode({ systemPrompt, userPrompt, messages, signal
     const session = await request('session/new', {
       cwd, mcpServers: [],
       _meta: { claudeCode: { options: {
+        ...(model === 'default' ? {} : { model }),
         systemPrompt, tools: [], settingSources: [], strictMcpConfig: true,
         persistSession: false, promptSuggestions: false, maxTurns: 1,
       } } },

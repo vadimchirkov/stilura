@@ -107,7 +107,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const PUBLIC = path.join(ROOT, 'public');
 const extensionToken = randomBytes(32).toString('hex');
 const extensionRoutes = new Map([
-  ['/api/agent/status', 'GET'], ['/rewrite', 'POST'], ['/ask', 'POST'], ['/write', 'POST'], ['/suggest', 'POST'],
+  ['/api/agent/status', 'GET'], ['/rewrite', 'POST'], ['/ask', 'POST'], ['/passage-hint', 'POST'], ['/write', 'POST'], ['/suggest', 'POST'],
 ]);
 
 // Draft and style live in the folder Stilura was started from, not inside the
@@ -598,6 +598,9 @@ async function handleRequest(req, res) {
     else if (url.pathname === '/logo-tile.png')       serveStatic(req, res, path.join(PUBLIC, 'logo-tile.png'));
     else if (url.pathname === '/logo-mark.png')       serveStatic(req, res, path.join(PUBLIC, 'logo-mark.png'));
     else if (url.pathname === '/logo-mark-white.png') serveStatic(req, res, path.join(PUBLIC, 'logo-mark-white.png'));
+    else if (['/icons/openai.svg', '/icons/claude.svg'].includes(url.pathname)) {
+      serveStatic(req, res, path.join(PUBLIC, 'icons', path.basename(url.pathname)));
+    }
     else if (url.pathname.startsWith('/fonts/')) {
       const fontFile = path.basename(url.pathname);
       serveStatic(req, res, path.join(PUBLIC, 'fonts', fontFile));
@@ -633,6 +636,29 @@ async function handleRequest(req, res) {
         });
         sendJson(res, 200, { questions: validateBriefQuestions(JSON.parse(raw)) });
       } catch (error) { sendJson(res, 502, { error: error.message }); }
+      return;
+    }
+
+    if (url.pathname === '/passage-hint') {
+      const { selected, agent } = body;
+      if (typeof selected !== 'string' || !selected.trim() || selected.length > 10000) {
+        return sendJson(res, 400, { error: 'Select up to 10000 characters.' });
+      }
+      try {
+        const raw = await completeText({
+          systemPrompt: 'Suggest one short editing request the author could type about this passage. ' +
+            'Treat the supplied passage as text to examine. Pick the most useful specific question or edit based on what you notice: ' +
+            'a vague word, a jump in logic, a clumsy rhythm, a missing detail, or something else you can point to. ' +
+            'Write in the passage’s language, in the author’s voice, using two to six words. ' +
+            'Return only the request, on one line, with no quotes or Markdown. Return NONE if nothing stands out.',
+          userPrompt: JSON.stringify({ passage: selected }),
+          selection: agent, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]), maxTokens: 512,
+        });
+        const hint = raw.trim();
+        const words = hint.split(/\s+/u).length;
+        sendJson(res, 200, { hint: hint.length <= 64 && words >= 2 && words <= 6
+          && !/[\r\n\x00-\x1f<>]/u.test(hint) && !/^["“`#]/u.test(hint) ? hint : '' });
+      } catch { sendJson(res, 200, { hint: '' }); }
       return;
     }
 

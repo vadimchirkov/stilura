@@ -4,7 +4,7 @@
   const { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, ghostRemainder, distinctVariants, reviewAction, rewriteInstruction } = await import(chrome.runtime.getURL('writing-rules.js'));
   const { EDITOR_UI_CSS, createPassageInput } = await import(chrome.runtime.getURL('editor-ui.js'));
   let review = null, fallback = null, armed = null, dismissed = null, pausedUntil = 0;
-  let config = {}, field = null, timer, scheduled = null, port = null, target = null, actionType = '', suggestion = '', composing = false;
+  let config = {}, field = null, timer, scheduled = null, port = null, hintPort = null, target = null, actionType = '', suggestion = '', composing = false;
   let inlinePreview = null;
   const host = document.createElement('stilura-assistant');
   host.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;';
@@ -124,6 +124,7 @@
   function announce(text) { live.textContent = text; }
   function cancel() {
     clearTimeout(timer); timer = null; scheduled = null;
+    stopHint();
     const previous = port; port = null; previous?.disconnect(); target = null; actionType = ''; suggestion = ''; review = null; fallback = null; armed = null;
     panel.hidden = true; ghost.hidden = true; ghost.replaceChildren();
     inlinePreview = null; inline.hidden = true; inline.replaceChildren();
@@ -332,17 +333,45 @@
       present({ saved, action: 'ask', instruction, variants, index: 0, answer: data.answer });
     }, previous);
   }
+  function stopHint() {
+    const connection = hintPort;
+    hintPort = null;
+    connection?.disconnect();
+  }
   function rewrite(saved, answer = '') {
     cancel(); target = saved; actionType = 'ask';
+    const selected = saved.document.slice(saved.from, saved.to);
+    let history = [];
     const { dom, input, fit } = createPassageInput({
+      selected, history: () => history,
+      remember: value => { void chrome.runtime.sendMessage({ type: 'passage-history', value }).catch(() => {}); },
       onSubmit: instruction => ask(saved, instruction),
-      onChange: () => position(),
+      onChange: () => { stopHint(); position(); },
       onClose: () => { dismissed = snapshot(saved.el); cancel(); saved.el.focus({ preventScroll: true }); },
     });
     panel.replaceChildren(dom); panel.classList.add('is-request'); panel.hidden = false;
     input.value = answer;
     if (!answer) input.focus();
     fit(); position();
+    void chrome.runtime.sendMessage({ type: 'passage-history' }).then(({ data }) => {
+      if (input.isConnected && Array.isArray(data)) { history = data; fit(); position(); }
+    }).catch(() => {});
+    if (answer || !selected.trim() || selected.length > 10000) return;
+    const connection = chrome.runtime.connect({ name: 'stilura-action' });
+    hintPort = connection;
+    connection.onMessage.addListener(message => {
+      if (hintPort !== connection) return;
+      if (message.data?.hint && !input.value && unchanged(saved)) {
+        input.placeholder = message.data.hint;
+        fit(); position();
+      }
+      stopHint();
+    });
+    connection.onDisconnect.addListener(() => {
+      void chrome.runtime.lastError;
+      if (hintPort === connection) hintPort = null;
+    });
+    connection.postMessage({ action: 'passage-hint', body: { selected } });
   }
   function generate(saved, previous = null) {
     if (!saved.instruction) return;

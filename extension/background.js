@@ -1,4 +1,7 @@
+import { rememberPassageRequest } from './editor-ui.js';
+
 const protectedStorage = chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+let passageHistoryWrite = Promise.resolve();
 const defaults = { server: 'http://127.0.0.1:3000', enabled: true, suggestions: true, agent: null };
 
 function localServer(value) {
@@ -71,6 +74,21 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   (async () => {
     const config = await settings();
     if (message.type === 'settings') return { server: config.server, enabled: config.enabled, suggestions: config.suggestions, connected: !!config.token, ...(ownPage ? { agent: config.agent } : {}) };
+    if (message.type === 'passage-history' && sender.tab) {
+      if (message.value === undefined) {
+        await passageHistoryWrite;
+        return (await settings()).passageHistory ?? [];
+      }
+      if (typeof message.value !== 'string' || !message.value.trim() || message.value.length > 4000) throw Error('Invalid passage request');
+      const write = passageHistoryWrite.then(async () => {
+        const { passageHistory = [] } = await settings();
+        const history = rememberPassageRequest(passageHistory, message.value.trim());
+        await chrome.storage.local.set({ passageHistory: history });
+        return history;
+      });
+      passageHistoryWrite = write.catch(() => {});
+      return write;
+    }
     if (!ownPage) throw Error('Settings are only available in the extension.');
     if (message.type === 'connect') return connect(message.server);
     if (message.type === 'status') return (await request('/api/agent/status', null, AbortSignal.timeout(15000))).json();
@@ -99,9 +117,9 @@ chrome.runtime.onConnect.addListener(port => {
     (async () => {
       const config = await settings();
       if (!config.enabled || (message.action === 'suggest' && !message.body?.manual && !config.suggestions)) throw Error('Stilura is paused.');
-      if (!['ask', 'write', 'suggest'].includes(message.action)) throw Error('Unknown action');
+      if (!['ask', 'write', 'suggest', 'passage-hint'].includes(message.action)) throw Error('Unknown action');
       const body = message.body;
-      if (!body || typeof body.document !== 'string' || body.document.length > 60000) throw Error('Use a field with up to 60,000 characters.');
+      if (!body || (message.action !== 'passage-hint' && (typeof body.document !== 'string' || body.document.length > 60000))) throw Error('Use a field with up to 60,000 characters.');
       const response = await request('/' + message.action, body, AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]));
       if (message.action !== 'write') { send({ data: await response.json(), done: true }); return; }
       const reader = response.body.getReader(), decoder = new TextDecoder();

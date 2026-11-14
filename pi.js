@@ -1,7 +1,7 @@
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { connectMcp } from './mcp.js';
-import { CLAUDE_CODE, askClaudeCode, claudeCodeStatus, claudeModel } from './claude-code.js';
+import { CLAUDE_CODE, askClaudeCode, claudeCodeStatus, claudeModels } from './claude-code.js';
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 // Named models first. A router picks a different model per request, so the same
@@ -105,14 +105,14 @@ export async function getAgentStatus() {
       ?? FALLBACK_MODELS.map(([provider, id]) => unique.find(model => model.provider === provider && model.id === id)).find(Boolean)
       ?? unique[0];
     if (claudeCode.plan) {
-      models.push(claudeModel);
-      providers.push({ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max', models: [claudeModel] });
+      models.push(...claudeModels);
+      providers.push({ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max', models: claudeModels });
     }
     return {
       claudeCode,
       available: models.length > 0,
       ...(selected ? { defaultSelection: selectionFor(selected) } : claudeCode.plan
-        ? { defaultSelection: { provider: CLAUDE_CODE, model: claudeModel.model, thinkingLevel: 'off' } } : {}),
+        ? { defaultSelection: { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' } } : {}),
       providers,
       models,
       authProviders,
@@ -321,7 +321,7 @@ const mandatoryReasoning = response => /reasoning is mandatory/i.test(response.e
 const notSupported = message => /model is not supported when using Codex with a ChatGPT account/i.test(message ?? '');
 
 export async function completeText({ systemPrompt, userPrompt, selection, maxTokens = 1500, signal, continuation = false }) {
-  if (selection?.provider === CLAUDE_CODE) return askClaudeCode({ systemPrompt, userPrompt, signal });
+  if (selection?.provider === CLAUDE_CODE) return askClaudeCode({ systemPrompt, userPrompt, model: selection.model, signal });
   const resolved = await resolveModel(selection);
   const modelKey = `${resolved.model.provider}/${resolved.model.id}`;
   // Typing suggestions need the least reasoning the model supports, regardless
@@ -359,7 +359,7 @@ export async function completeText({ systemPrompt, userPrompt, selection, maxTok
 
 export async function streamText({ systemPrompt, userPrompt, messages, selection, maxTokens = 2000, signal, onText, mcp = false, onReset = () => {} }) {
   if (selection?.provider === CLAUDE_CODE) {
-    await askClaudeCode({ systemPrompt, userPrompt, messages, signal, onText });
+    await askClaudeCode({ systemPrompt, userPrompt, messages, model: selection.model, signal, onText });
     return;
   }
   const resolved = await resolveModel(selection);

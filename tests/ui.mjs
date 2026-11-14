@@ -1,3 +1,4 @@
+import { waitingForSlash } from '../src/features/generate.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -100,7 +101,7 @@ const section = appSection;
     },
   })]));
   const context = docContext({ ...fields, Decoration, RangeSet, EditorView,
-    GenerationWidget: class { constructor(value) { this.value = value; } }, PlainVariantWidget: class {} });
+    waitingForSlash, GenerationWidget: class { constructor(value) { this.value = value; } }, PlainVariantWidget: class {} });
   vm.runInContext(section('function textHighlights(', 'const editorTheme ='), context);
   assert.doesNotThrow(() => EditorState.create({ doc: 'Draft', extensions: [...Object.entries(fields).filter(([name]) => name !== 'noteField').map(([, field]) => field), vm.runInContext('textHighlightLayer', context)] }), 'paused note UI does not require its optional field');
   let state = EditorState.create({ doc: 'One phrase across\nseveral lines.', extensions: [...Object.values(fields), vm.runInContext('textHighlightLayer', context)] });

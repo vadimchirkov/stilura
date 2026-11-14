@@ -258,6 +258,16 @@ assert.equal(commands.requests.length, 0, 'no generation was started');
   assert.deepEqual(parts(state), ['cm-generation-request', 'hidden 0-1']);
   state = state.update({ changes: { from: 0, to: 1 } }).state;
   assert.equal(state.field(field).size, 0);
+  const prefix = 'See /notes.';
+  state = EditorState.create({ doc: prefix, extensions: [field] });
+  state = state.update({ changes: { from: prefix.length, insert: '/' },
+    selection: { anchor: prefix.length + 1 }, userEvent: 'input.type' }).state;
+  assert.equal(test.context.slashRequest(state).from, prefix.length);
+  assert.deepEqual(parts(state), ['cm-inline-request', 'hidden 11-12', 'hidden 12-12']);
+  state = state.update({ changes: { from: prefix.length + 1, insert: 'Compare A / B' },
+    selection: { anchor: prefix.length + 14 }, userEvent: 'input.type' }).state;
+  assert.equal(test.context.slashRequest(state).instruction, 'Compare A / B');
+  assert.deepEqual(parts(state), ['cm-generation-request', 'cm-inline-request', 'hidden 11-12', 'hidden 25-25']);
   for (const text of ['/Напиши вступление', '/ Напиши вступление', '  /  Напиши вступление  ']) {
     test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field] });
     const asked = test.requests.length;
@@ -284,7 +294,9 @@ assert.equal(commands.requests.length, 0, 'no generation was started');
   assert.equal(request.instruction, 'Continue the scene');
   assert.equal(request.inline, true);
   const highlight = test.view.state.field(requestField).iter();
-  assert.deepEqual([highlight.from, highlight.to], [prefix.length, prefix.length + 1], 'the slash itself is hidden');
+  assert.equal(highlight.value.spec.class, 'cm-inline-request');
+  highlight.next();
+  assert.deepEqual([highlight.from, highlight.to], [prefix.length, prefix.length + 1]);
   highlight.next();
   assert.equal(highlight.value.spec.class, 'cm-generation-request');
   assert.deepEqual([highlight.from, highlight.to], [prefix.length + 1, text.length], 'highlight only the request');

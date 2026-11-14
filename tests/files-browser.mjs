@@ -25,7 +25,7 @@ const env = Object.fromEntries(Object.entries(process.env)
   .filter(([name]) => !/API_KEY|TOKEN|SECRET|^AWS_|^GOOGLE_|^AZURE_|^PI_/.test(name)));
 const server = spawn(process.execPath, [fileURLToPath(new URL('../index.js', import.meta.url))], {
   cwd: directory,
-  env: { ...env, PORT: '0', STILURA_NO_OPEN: '1', DRAFT_FILE: draft, STILURA_OFFLINE_MODELS: '1',
+  env: { ...env, PORT: '0', STILURA_NO_OPEN: '1', DRAFT_FILE: draft, STILURA_CLAUDE_CODE: '/nonexistent', STILURA_CLAUDE_ACP: '/nonexistent', STILURA_OFFLINE_MODELS: '1',
     PI_CODING_AGENT_DIR: path.join(directory, '.pi') },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -53,12 +53,25 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.querySelector('.cm-content')?.innerText.includes('Home draft text.'));
+  await page.waitForSelector('#settings-dialog[open]');
   await page.evaluate(() => document.getElementById('settings-dialog').close());
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
   const opened = name => page.waitForFunction(name => document.querySelector('.file-card[aria-current="true"] .file-name')?.textContent === name, {}, name);
-  const action = (name, index) => page.evaluate((name, index) => [...document.querySelectorAll('.file-list > li')]
-    .find(item => item.querySelector('.file-name')?.textContent === name).querySelectorAll('.file-action')[index].click(), name, index);
+  const action = async (name, index) => {
+    const row = await page.evaluateHandle(name => [...document.querySelectorAll('.file-list > li')]
+      .find(item => item.querySelector('.file-name')?.textContent === name), name);
+    const date = await row.$('.file-meta');
+    const more = await row.$('.file-more');
+    await more.focus();
+    assert.equal(await date.evaluate(node => getComputedStyle(node).visibility), 'hidden');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.file-action-panel:popover-open');
+    const actions = await row.$$('.file-action');
+    await actions[index].click();
+    await row.dispose();
+  };
   if (await page.$eval('#sidebar', node => node.getBoundingClientRect().width < 40)) await page.click('#sidebar-toggle');
+  await page.waitForFunction(() => !document.getElementById('sidebar-toggle-side').hidden);
   await page.waitForSelector('.file-card');
   await opened('draft.md');
 

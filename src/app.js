@@ -41,7 +41,7 @@ import { api } from './api.js';
 import { createDocumentState } from './document-state.js';
 import { createUpdateCheck } from './update.js';
 import { createSuggest } from './features/suggest.js';
-import { setGenerationFx, generationField, slashRequest, requestField, createGenerate } from './features/generate.js';
+import { setGenerationFx, generationField, slashRequest, requestField, waitingForSlash, createGenerate } from './features/generate.js';
 import { setPassageFx, createPassage } from './features/passage.js';
 import { createBubble } from './features/bubble.js';
 import { createSwitcher, newFileName } from './features/switcher.js';
@@ -267,21 +267,95 @@ function providerChoices() {
 // A provider picked in the list but not connected yet. It is not a selection:
 // nothing is saved until it connects and has a model.
 let draftProvider = null;
+let modelSetup = '';
+let guidedStep = 1;
+const chatService = document.getElementById('service-chatgpt');
+const claudeService = document.getElementById('service-claude');
+const apiService = document.getElementById('service-api');
+const apiModelSettings = document.getElementById('api-model-settings');
+const guidedStepsEl = document.getElementById('guided-steps');
+const guidedBackRowEl = document.getElementById('guided-back-row');
+const guidedReadyEl = document.getElementById('guided-ready');
+
+function syncGuidedMode() {
+  const isGuided = settingsDialog.dataset.guided === 'true' && settingsDialog.dataset.tab === 'models';
+  if (!isGuided) {
+    delete settingsDialog.dataset.guidedStep;
+    guidedStepsEl.hidden = true;
+    guidedBackRowEl.hidden = true;
+    guidedReadyEl.hidden = true;
+    return;
+  }
+  if (currentAgent()) guidedStep = 3;
+  else if (guidedStep === 3) guidedStep = 2;
+  settingsDialog.dataset.guidedStep = String(guidedStep);
+  guidedStepsEl.hidden = false;
+  guidedBackRowEl.hidden = guidedStep < 2;
+  guidedReadyEl.hidden = guidedStep !== 3;
+  for (const pill of guidedStepsEl.querySelectorAll('.guided-step')) {
+    const n = Number(pill.dataset.step);
+    pill.classList.toggle('is-now', n === guidedStep);
+    pill.classList.toggle('is-done', n < guidedStep);
+  }
+}
 
 function renderModelSettings() {
   draftSelection = normalizeSelection(draftSelection)
     ?? normalizeSelection(agentInfo.defaultSelection)
     ?? (agentInfo.models[0] ? normalizeSelection({ ...agentInfo.models[0], thinkingLevel: 'medium' }) : null);
   const choices = providerChoices();
-  setOptions(providerEl, choices.map(choice => ({
+  const apiChoices = choices.filter(choice => !choice.signin && choice.id !== claudeProvider);
+  const apiOpen = modelSetup === 'api';
+  const guided = settingsDialog.dataset.guided === 'true';
+  const activeAgent = currentAgent();
+  const id = modelSetup && !apiOpen ? modelSetup : activeAgent?.provider;
+  const showSubscriptionModel = !guided && ['openai-codex', claudeProvider].includes(id) && Boolean(modelFor(id));
+  document.getElementById('writing-model-heading').textContent = guided ? 'Connect your writing assistant' : 'Writing model';
+  apiModelSettings.hidden = !apiOpen && !showSubscriptionModel;
+  document.getElementById('provider-field').hidden = !apiOpen;
+  apiService.setAttribute('aria-expanded', String(apiOpen));
+  for (const [tab, section] of [[chatService, 'openai-codex'], [claudeService, claudeProvider], [apiService, 'api']]) {
+    if (guided) tab.removeAttribute('aria-pressed');
+    else tab.setAttribute('aria-pressed', String(section === (apiOpen ? 'api' : id)));
+  }
+  setOptions(providerEl, apiChoices.map(choice => ({
     value: choice.id,
     label: choice.connected ? choice.name : `${choice.name} · not connected`,
   })), draftProvider ?? draftSelection?.provider);
-  const provider = choices.find(choice => choice.id === fieldValue(providerEl));
+  const provider = choices.find(choice => choice.id === (apiOpen ? fieldValue(providerEl) : id));
   const connected = !!provider?.connected;
-  modelField.hidden = !connected;
-  thinkingField.hidden = !connected || provider.id === claudeProvider;
-  if (connected) {
+  modelField.hidden = !(connected && (apiOpen || showSubscriptionModel));
+  thinkingField.hidden = modelField.hidden || provider?.id === claudeProvider;
+  for (const [card, id, label] of [[chatService, 'openai-codex', 'Plus or Pro'], [claudeService, claudeProvider, 'Claude Pro or Max']]) {
+    const model = modelFor(id);
+    const active = currentAgent()?.provider === id;
+    const plan = id === claudeProvider && agentInfo.claudeCode?.plan;
+    const modelName = plan ? `Claude ${plan === 'max' ? 'Max' : 'Pro'} · ${model?.name || model?.model}` : (model?.name || model?.model);
+    card.querySelector('small').textContent = model ? `${active ? '' : 'Connected · '}${modelName}` : label;
+    card.classList.toggle('is-active', active);
+    card.classList.toggle('is-connected', Boolean(model));
+    if (active) card.setAttribute('aria-current', 'true');
+    else card.removeAttribute('aria-current');
+    card.disabled = !choices.some(choice => choice.id === id);
+  }
+  const chatAction = document.getElementById('chat-service-action');
+  const chat = choices.find(choice => choice.id === 'openai-codex');
+  chatAction.hidden = apiOpen || id !== 'openai-codex' || !chat?.signin?.configured;
+  if (!chatAction.hidden && !chatAction.firstChild) chatAction.append(signOutButton(chat));
+  if (chatAction.hidden) chatAction.replaceChildren();
+  const activeIsApi = Boolean(activeAgent && !['openai-codex', claudeProvider].includes(activeAgent.provider));
+  const activeApiChoice = activeIsApi ? choices.find(choice => choice.id === activeAgent.provider) : null;
+  const activeApiModel = activeIsApi ? agentInfo.models.find(item => item.provider === activeAgent.provider && item.model === activeAgent.model) : null;
+  apiService.querySelector('small').textContent = activeIsApi
+    ? `${activeApiChoice?.name ?? activeAgent.provider} · ${activeApiModel?.name || activeAgent.model}`
+    : 'Choose a provider';
+  apiService.classList.toggle('is-active', activeIsApi);
+  apiService.classList.toggle('is-connected', apiChoices.some(choice => choice.connected));
+  if (activeIsApi) apiService.setAttribute('aria-current', 'true');
+  else apiService.removeAttribute('aria-current');
+  chatService.setAttribute('aria-expanded', String(id === 'openai-codex' && !connected));
+  claudeService.setAttribute('aria-expanded', String(id === claudeProvider && !connected));
+  if (connected && (apiOpen || showSubscriptionModel)) {
     const models = agentInfo.models.filter(model => model.provider === provider.id);
     setOptions(modelEl, models.map(model => ({ value: model.model, label: model.name || model.model })), draftSelection?.model);
     const model = models.find(item => item.model === fieldValue(modelEl));
@@ -292,6 +366,7 @@ function renderModelSettings() {
   modelHint.textContent = !choices.length ? 'No providers found. Check that Pi is installed.'
     : provider && !connected && (provider.signin || provider.key) ? `Connect ${provider.name} to choose a model.` : '';
   renderConnection(provider);
+  syncGuidedMode();
 }
 
 // Under the fields: how the chosen provider connects, or how it is
@@ -300,28 +375,35 @@ function renderModelSettings() {
 function renderConnection(provider) {
   const connected = !!provider?.connected;
   connectRow.hidden = !provider || connected;
-  connectSignin.hidden = connectRow.hidden || !provider.signin;
+  connectSignin.hidden = connectRow.hidden || !provider.signin || modelSetup !== 'openai-codex';
   connectClaude.hidden = connectRow.hidden || provider.id !== claudeProvider;
   if (!connectClaude.hidden) {
-    document.getElementById('claude-connect-hint').textContent = agentInfo.claudeCode.installed
-      ? 'Run claude auth login in Terminal, sign in with Pro or Max, then check the connection.'
-      : 'Install Claude Code and claude-agent-acp, then sign in from Terminal.';
+    const installed = agentInfo.claudeCode.installed;
+    document.getElementById('claude-connect-hint').textContent = installed
+      ? 'Sign in with Claude Pro or Max in Terminal, then check the connection here.'
+      : 'Install Claude Code and the ACP adapter, then sign in from Terminal.';
+    document.getElementById('claude-command').hidden = !installed;
+    document.getElementById('claude-install').hidden = installed;
   }
-  connectKey.hidden = connectRow.hidden || !!provider.signin || !provider.key;
+  connectKey.hidden = connectRow.hidden || modelSetup !== 'api' || !provider.key;
   if (!connectKey.hidden) {
     apiKeyEl.placeholder = provider.key.label ?? 'API key';
     document.getElementById('api-key-label').textContent = `${provider.name} API key`;
     document.getElementById('api-key-hint').textContent = `Stored on this computer. Sent only to ${provider.name}.`;
   }
+  const statusEl = text => {
+    const span = document.createElement('span');
+    span.className = 'connection-status';
+    span.textContent = text;
+    return span;
+  };
   const line = [];
-  if (connected && provider.id === claudeProvider) {
-    line.push(`Connected through Claude Code · ${agentInfo.claudeCode.plan === 'max' ? 'Max' : 'Pro'}. Use Cmd/Ctrl+Enter to request a continuation.`);
-  } else if (connected && provider.signin?.configured) {
-    line.push(`Signed in to ${provider.name}. `, linkButton('Sign out', `Sign out of ${provider.name}`, () => removeProviderKey(provider.id)));
+  if (connected && ['openai-codex', claudeProvider].includes(provider.id)) {
+    // Subscription status is shown on its service card.
   } else if (connected && provider.key?.configured && provider.key.source !== 'environment') {
-    line.push('Connected with an API key. ', removeKeyButton(provider));
+    line.push(statusEl('Connected with an API key. '), removeKeyButton(provider));
   } else if (connected) {
-    line.push(provider.key?.source === 'environment' ? 'Connected with a key from the environment.' : 'Connected.');
+    line.push(statusEl(provider.key?.source === 'environment' ? `Connected to ${provider.name} with a key from the environment.` : `Connected to ${provider.name}.`));
   } else if (provider && !provider.signin && !provider.key && provider.id !== claudeProvider) {
     line.push('This provider is configured outside Stilura.');
   }
@@ -339,28 +421,48 @@ function linkButton(label, title, run) {
   return button;
 }
 
-// A removed key cannot be brought back from here: the first press only arms
-// the button, the second removes. Blur or Escape disarms it.
-function removeKeyButton(provider) {
-  const remove = linkButton('Remove key', `Remove ${provider.name} key`, () => {
-    if (remove.classList.contains('is-armed')) return removeProviderKey(provider.id);
-    remove.classList.add('is-armed');
-    remove.textContent = 'Press again to remove';
-    remove.ariaLabel = `Confirm: remove ${provider.name} key`;
+// A removed key or sign-out cannot be undone from here: the first press only
+// arms the button, the second acts. Blur or Escape disarms it.
+function armedActionButton({ label, title, armedLabel, armedAriaLabel, onConfirm }) {
+  const button = linkButton(label, title, () => {
+    if (button.classList.contains('is-armed')) return onConfirm();
+    button.classList.add('is-armed');
+    button.textContent = armedLabel;
+    button.ariaLabel = armedAriaLabel;
   });
   const disarm = () => {
-    remove.classList.remove('is-armed');
-    remove.textContent = 'Remove key';
-    remove.removeAttribute('aria-label');
+    button.classList.remove('is-armed');
+    button.textContent = label;
+    button.removeAttribute('aria-label');
   };
-  remove.addEventListener('blur', disarm);
-  remove.addEventListener('keydown', event => {
-    if (event.key !== 'Escape' || !remove.classList.contains('is-armed')) return;
+  button.addEventListener('blur', disarm);
+  button.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !button.classList.contains('is-armed')) return;
     event.preventDefault();
     event.stopPropagation();
     disarm();
   });
-  return remove;
+  return button;
+}
+
+function removeKeyButton(provider) {
+  return armedActionButton({
+    label: 'Remove key',
+    title: `Remove ${provider.name} key`,
+    armedLabel: 'Press again to remove',
+    armedAriaLabel: `Confirm: remove ${provider.name} key`,
+    onConfirm: () => removeProviderKey(provider.id),
+  });
+}
+
+function signOutButton(provider) {
+  return armedActionButton({
+    label: 'Sign out',
+    title: `Sign out of ${provider.name}`,
+    armedLabel: 'Press again to sign out',
+    armedAriaLabel: `Confirm: sign out of ${provider.name}`,
+    onConfirm: () => removeProviderKey(provider.id),
+  });
 }
 
 // The model a provider starts on: the one in use if it is this provider's,
@@ -383,7 +485,7 @@ function selectProvider(id) {
   draftProvider = chosen ? null : id;
   if (chosen) draftSelection = { provider: id, model: chosen.model, thinkingLevel: agentSelection?.provider === id ? agentSelection.thinkingLevel : 'medium' };
   renderModelSettings();
-  if (chosen) saveAgentSelection();
+  if (chosen) { saveAgentSelection(); renderModelSettings(); }
 }
 const connectedTo = selectProvider;
 
@@ -420,6 +522,9 @@ function showSettingsTab(name, focus = false) {
   }
   document.getElementById('settings-panel').setAttribute('aria-labelledby', `tab-${name}`);
   document.getElementById('settings-panel').scrollTop = 0;
+  if (name !== 'models') delete settingsDialog.dataset.guided;
+  if (settingsDialog.open && name === 'models') renderModelSettings();
+  else syncGuidedMode();
 }
 for (const tab of settingsTabs) {
   tab.addEventListener('click', () => showSettingsTab(tab.dataset.tab));
@@ -436,7 +541,7 @@ showSettingsTab(settingsDialog.dataset.tab);
 
 // `tab` picks the tab to land on; a click passes its event, which is ignored
 // and leaves the tab the writer was last on. 'welcome' is the first-run way
-// in: the Model tab with ChatGPT already chosen and its Sign in focused.
+// in: the Model tab with the ChatGPT card focused.
 async function openSettings(tab) {
   const welcome = tab === 'welcome';
   if (typeof tab === 'string') showSettingsTab(welcome ? 'models' : tab);
@@ -444,30 +549,51 @@ async function openSettings(tab) {
   try { await refreshAgent(); } catch (error) { settingsError.textContent = error.message; }
   await refreshOAuth();
   draftSelection = currentAgent();
-  draftProvider = welcome && oauthInfo.supported.some(provider => provider.id === 'openai-codex') ? 'openai-codex' : null;
+  draftProvider = null;
+  if (welcome || !draftSelection) {
+    settingsDialog.dataset.guided = 'true';
+    guidedStep = 1;
+  } else {
+    delete settingsDialog.dataset.guided;
+    guidedStep = 1;
+  }
+  modelSetup = draftSelection && !['openai-codex', claudeProvider].includes(draftSelection.provider) ? 'api' : '';
   renderModelSettings();
   renderOAuthFlow();
   if (!settingsDialog.open) settingsDialog.showModal();
   else pollOAuth();
   // First run says why the dialog opened; the next opening reads normally.
   document.getElementById('settings-sub').textContent = welcome
-    ? 'Choose a model to start writing with AI. Sign in with ChatGPT, or pick another provider and add its API key.'
+    ? 'Connect a service to start writing with AI.'
     : 'Changes save as you make them.';
-  if (welcome && !connectSignin.hidden) document.getElementById('connect-browser').focus();
+  if (welcome && !chatService.disabled) chatService.focus();
 }
 
 settingsOpen.addEventListener('click', openSettings);
+document.getElementById('claude-copy').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  try {
+    await navigator.clipboard.writeText('claude auth login');
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+  } catch { button.textContent = 'Copy failed'; }
+});
 document.getElementById('claude-recheck').addEventListener('click', async event => {
   const button = event.currentTarget;
+  const prevText = button.textContent;
   button.disabled = true;
+  button.textContent = 'Checking…';
   settingsError.textContent = '';
   try {
     await refreshAgent();
-    if (fieldValue(providerEl) !== claudeProvider) return;
+    if (modelSetup !== claudeProvider) return;
     selectProvider(claudeProvider);
     if (!agentInfo.claudeCode?.plan) settingsError.textContent = 'Claude Code is not connected to a Pro or Max account.';
   } catch (error) { settingsError.textContent = error.message; }
-  finally { button.disabled = false; }
+  finally {
+    button.disabled = false;
+    button.textContent = prevText;
+  }
 });
 // transitions-dev modal close (06-modal.md): play .is-closing (150ms) before
 // .close() so exit mirrors enter; Escape stays instant (native), class is
@@ -503,9 +629,9 @@ async function ensureAgent() {
 
 providerEl.addEventListener('change', () => selectProvider(fieldValue(providerEl)));
 modelEl.addEventListener('change', () => {
-  draftSelection = { provider: fieldValue(providerEl), model: fieldValue(modelEl), thinkingLevel: draftSelection?.thinkingLevel ?? 'medium' };
-  renderModelSettings();
+  draftSelection = { provider: modelSetup === 'api' ? fieldValue(providerEl) : modelSetup || currentAgent()?.provider, model: fieldValue(modelEl), thinkingLevel: draftSelection?.thinkingLevel ?? 'medium' };
   saveAgentSelection();
+  renderModelSettings();
 });
 // A popover left open behind a closed dialog comes back with it.
 settingsDialog.addEventListener('close', () => {
@@ -632,6 +758,12 @@ const oauthSendEl   = document.getElementById('oauth-send');
 const oauthCancelEl = document.getElementById('oauth-cancel');
 let oauthInfo = { supported: [], active: null };
 let oauthTimer = null;
+let oauthTab = null;
+
+function closeOAuthTab() {
+  try { oauthTab?.close(); } catch {}
+  oauthTab = null;
+}
 
 function stopOAuthPoll() {
   if (oauthTimer) { clearTimeout(oauthTimer); oauthTimer = null; }
@@ -652,15 +784,19 @@ function renderOAuthFlow() {
   const active = oauthInfo.active;
   const pending = oauthActivePending();
   oauthFlowEl.hidden = !active || (!pending && active.step !== 'error');
+  oauthFlowEl.classList.toggle('is-pending', pending);
+  oauthFlowEl.classList.toggle('is-error', active?.step === 'error');
   if (oauthFlowEl.hidden) { stopOAuthPoll(); return; }
   if (active.step === 'error') {
     oauthStatusEl.textContent = `Sign-in didn't finish.${active.error ? ` ${active.error}.` : ''} Try again.`;
     oauthUrlWrap.hidden = true;
     oauthDeviceWrap.hidden = true;
     oauthPasteWrap.hidden = true;
+    oauthCancelEl.textContent = 'Dismiss';
     stopOAuthPoll();
     return;
   }
+  oauthCancelEl.textContent = 'Cancel';
   oauthStatusEl.textContent = active.step === 'device'
     ? 'Waiting for you to approve on the verification page…'
     : 'Finish signing in in the new tab.';
@@ -679,25 +815,29 @@ function renderOAuthFlow() {
   oauthPasteWrap.hidden = false;
 }
 
-async function pollOAuth() {
+async function pollOAuth(finishing = false) {
   stopOAuthPoll();
   // Keeps going with the dialog closed: the browser sign-in finishes in
   // another tab, and the writer may have closed settings to wait.
-  if (!oauthActivePending()) return;
+  if (!oauthActivePending() && !finishing) return;
   try {
     const status = await api('/api/agent/oauth/status');
+    if (status.active?.step === 'done') {
+      // Keep the pending state until model refresh succeeds, so a transient
+      // failure here can retry the completion rather than losing it.
+      await refreshAgent();
+      oauthInfo = status;
+      renderSubscriptions();
+      closeOAuthTab();
+      signedIn(status.active.provider);
+      return;
+    }
     oauthInfo = status;
     renderSubscriptions();
     if (oauthActivePending()) {
       oauthTimer = setTimeout(pollOAuth, 2000);
-    } else if (oauthInfo.active?.step === 'done') {
-      await refreshAgent();
-      // The chip reads oauthInfo.supported: re-read it, or the just-signed-in
-      // subscription keeps showing "not connected / Sign in" until reopen.
-      await refreshOAuth();
-      signedIn(oauthInfo.active?.provider ?? '');
     }
-  } catch { oauthTimer = setTimeout(pollOAuth, 5000); }
+  } catch { oauthTimer = setTimeout(() => pollOAuth(finishing), 5000); }
 }
 
 // Signing in is choosing that provider: switch to its recommended model even
@@ -705,11 +845,18 @@ async function pollOAuth() {
 function signedIn(provider) {
   draftProvider = null;
   const recommended = oauthInfo.supported.find(item => item.id === provider)?.recommended;
-  draftSelection = recommended ? { provider, model: recommended, thinkingLevel: 'medium' } : currentAgent();
+  const models = agentInfo.models.filter(item => item.provider === provider);
+  const model = models.find(item => item.model === recommended) ?? models[0];
+  if (!model) {
+    settingsError.textContent = 'Signed in, but ChatGPT did not return an available model.';
+    return;
+  }
+  draftSelection = { provider, model: model.model, thinkingLevel: 'medium' };
   saveAgentSelection();
   renderModelSettings();
   const chosen = agentInfo.models.find(item => item.provider === currentAgent()?.provider && item.model === currentAgent()?.model);
   if (!chosen || chosen.provider !== provider) return;
+  if (typeof settingsDialog !== 'undefined' && settingsDialog.dataset.guided === 'true') return;
   closeSettingsAnimated();
   notify(`Signed in with ChatGPT. Writing with ${chosen.name ?? chosen.model}.`, { action: () => openSettings('models'), label: 'Change' });
 }
@@ -720,7 +867,9 @@ async function startOAuthFlow(provider, method) {
   // the auth URL arrives after a round-trip — so park a blank tab now and
   // navigate it once the URL lands. If it never lands, the link in the flow
   // box below takes over as the manual fallback.
+  closeOAuthTab();
   const authTab = method === 'browser' ? window.open('about:blank', '_blank') : null;
+  oauthTab = authTab;
   try {
     oauthInfo = await api('/api/agent/oauth/start', {
       method: 'POST',
@@ -757,19 +906,55 @@ oauthSendEl.addEventListener('click', async () => {
     });
     oauthCodeEl.value = '';
     renderSubscriptions();
-    pollOAuth();
+    pollOAuth(oauthInfo.active?.step === 'done');
   } catch (error) { settingsError.textContent = error.message; }
 });
 oauthCancelEl.addEventListener('click', async () => {
   try {
     oauthInfo = await api('/api/agent/oauth/cancel', { method: 'POST' });
+    closeOAuthTab();
     renderSubscriptions();
     pollOAuth();
   } catch (error) { settingsError.textContent = error.message; }
 });
 
-document.getElementById('connect-browser').addEventListener('click', () => startOAuthFlow(fieldValue(providerEl), 'browser'));
-document.getElementById('connect-device').addEventListener('click', () => startOAuthFlow(fieldValue(providerEl), 'device_code'));
+chatService.addEventListener('click', () => {
+  modelSetup = 'openai-codex';
+  if (settingsDialog.dataset.guided === 'true') guidedStep = 2;
+  selectProvider('openai-codex');
+  if (!modelFor('openai-codex') && !oauthActivePending()) void startOAuthFlow('openai-codex', 'browser');
+});
+claudeService.addEventListener('click', () => {
+  modelSetup = claudeProvider;
+  if (settingsDialog.dataset.guided === 'true') guidedStep = 2;
+  selectProvider(claudeProvider);
+});
+apiService.addEventListener('click', () => {
+  const fromStep1 = settingsDialog.dataset.guided === 'true' && guidedStep === 1;
+  modelSetup = fromStep1 ? 'api' : (modelSetup === 'api' ? '' : 'api');
+  if (settingsDialog.dataset.guided === 'true' && modelSetup === 'api') guidedStep = 2;
+  draftProvider = null;
+  renderModelSettings();
+  if (modelSetup === 'api') providerEl.focus();
+});
+document.getElementById('guided-back')?.addEventListener('click', () => {
+  guidedStep = 1;
+  modelSetup = '';
+  draftProvider = null;
+  renderModelSettings();
+});
+document.getElementById('guided-done')?.addEventListener('click', () => closeSettingsAnimated());
+document.getElementById('connect-browser')?.addEventListener('click', () => startOAuthFlow('openai-codex', 'browser'));
+document.getElementById('connect-device').addEventListener('click', () => startOAuthFlow('openai-codex', 'device_code'));
+document.getElementById('oauth-copy-code')?.addEventListener('click', event => {
+  const button = event.currentTarget;
+  const code = oauthDeviceCode.textContent;
+  if (!code) return;
+  navigator.clipboard?.writeText(code).then(() => {
+    button.textContent = 'Copied';
+    setTimeout(() => { if (button.isConnected) button.textContent = 'Copy code'; }, 1500);
+  }).catch(() => {});
+});
 
 // First run: no model anywhere means every AI action would fail, so offer the
 // way in at once instead of waiting for the writer to hit that wall.
@@ -784,6 +969,7 @@ const spelling = createSpelling({ view: () => workView });
 const { schedule: scheduleSpellCheck, run: runSpellCheck } = spelling;
 
 document.addEventListener('keydown', event => {
+  if (event.defaultPrevented || (event.key === 'Escape' && event.target.closest('.file-action-panel:popover-open'))) return;
   if (event.key === 'Escape' && !markBubble.hidden) { hideMarkBubble(); workView.focus(); return; }
   if (event.key === 'Escape' && plainPreview) { clearPlainPreview(); workView.focus(); return; }
   // Last, so the lighter dismissals above still win. On a narrow window the
@@ -864,6 +1050,7 @@ function editorSetReadonly(view, on) {
 
 // ─── Local passage actions ─── (src/features/passage.js)
 const passage = createPassage({
+  storage: localStorage,
   jobs,
   docState,
   cancelSuggestion: () => cancelSuggestion(),
@@ -2563,7 +2750,7 @@ function textHighlights(state) {
   const priorities = new Map();
   sets.forEach((set, priority) => set.between(0, state.doc.length, (_from, _to, value) => priorities.set(value, priority)));
   // Replacement widgets occupy their range exclusively, including during regeneration.
-  if (generation && !(generation.source === 'passage' && passage?.busy)) sets.unshift(Decoration.set([
+  if (generation && !waitingForSlash(generation) && !(generation.source === 'passage' && passage?.busy)) sets.unshift(Decoration.set([
     Decoration.replace({ widget: new GenerationWidget(generation), block: !generation.inline }).range(generation.from, generation.to),
   ]));
   if (preview) sets.unshift(Decoration.set([
@@ -3279,22 +3466,41 @@ function renderFileList() {
     });
     item.append(row);
     // The home draft is where Stilura opens, so it keeps its name and stays.
-    if (!file.home) item.append(fileActions(file, item));
+    if (!file.home) {
+      item.classList.add('has-file-actions');
+      item.append(fileActions(file, item));
+    }
     fileList.append(item);
   }
 }
-// Rename and Delete stand on the card, shown on hover and keyboard focus.
 function fileActions(file, item) {
   const actions = chatEl('span', 'file-actions');
+  const toggle = chatEl('button', 'file-more', '⋯');
+  toggle.type = 'button';
+  toggle.setAttribute('aria-label', `Actions for ${file.name}`);
+  toggle.setAttribute('aria-expanded', 'false');
+  const panel = chatEl('span', 'file-action-panel');
+  panel.setAttribute('popover', 'auto');
+  toggle.popoverTargetElement = panel;
+  panel.addEventListener('beforetoggle', event => {
+    const open = event.newState === 'open';
+    item.classList.toggle('file-menu-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+    if (open) {
+      const bounds = toggle.getBoundingClientRect();
+      panel.style.left = `${Math.max(8, bounds.right - 152)}px`;
+      panel.style.top = `${Math.min(bounds.bottom + 4, window.innerHeight - 88)}px`;
+    }
+  });
   const rename = chatEl('button', 'file-action', 'Rename');
   rename.type = 'button';
-  rename.title = `Rename ${file.name}`;
-  rename.addEventListener('click', () => startRename(file, item));
-  const remove = chatEl('button', 'file-action', 'Delete');
+  rename.autofocus = true;
+  rename.addEventListener('click', () => { panel.hidePopover(); startRename(file, item); });
+  const remove = chatEl('button', 'file-action', 'Move to Trash');
   remove.type = 'button';
-  remove.title = `Move ${file.name} to the trash`;
-  remove.addEventListener('click', () => deleteFile(file.name));
-  actions.append(rename, remove);
+  remove.addEventListener('click', () => { panel.hidePopover(); deleteFile(file.name); });
+  panel.append(rename, remove);
+  actions.append(toggle, panel);
   return actions;
 }
 
@@ -3475,10 +3681,9 @@ document.getElementById('file-open').addEventListener('click', () => fileInput.c
 fileInput.addEventListener('change', () => { importFile(fileInput.files[0]); fileInput.value = ''; });
 editorWrap.addEventListener('dragover', event => event.preventDefault());
 editorWrap.addEventListener('drop', event => { event.preventDefault(); importFile(event.dataTransfer?.files?.[0]); });
-// Every version is one row: when it was kept, why, and the first line of it,
-// so the writer picks by reading rather than by expanding each one in turn.
 document.getElementById('file-history').addEventListener('click', async () => {
   const modal = dialog('Document history');
+  modal.classList.add('history-dialog');
   const current = workView.state.doc.toString();
   const search = document.createElement('input');
   search.type = 'search';
@@ -3488,26 +3693,59 @@ document.getElementById('file-history').addEventListener('click', async () => {
   search.autocomplete = 'off';
   search.spellcheck = false;
   const list = chatEl('div', 'history-list');
-  modal.append(search, list);
+  const toolbar = chatEl('div', 'history-toolbar');
+  toolbar.append(search);
+  modal.append(toolbar, list);
+  search.focus();
   let versions = [];
   function renderHistory() {
-    const query = search.value.trim().toLowerCase();
-    const shown = versions.filter(item => !query
-      || (item.label || 'Saved to disk').toLowerCase().includes(query)
-      || item.text.toLowerCase().includes(query));
+    const query = search.value.trim();
+    const matchQuery = query ? new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu') : null;
+    const shown = versions.map((item, index) => ({
+      item, newer: index ? versions[index - 1].text : current,
+      match: matchQuery?.exec(item.text),
+    })).filter(({ item, match }) => !matchQuery || match || matchQuery.test(item.label || 'Saved to disk'));
     list.replaceChildren();
-    for (const item of shown) {
+    for (const { item, newer, match } of shown) {
       const row = chatEl('div', 'history-item');
       const words = item.text.match(/\S+/g)?.length ?? 0;
       row.append(chatEl('div', 'history-when',
         `${new Date(item.at).toLocaleString()} · ${item.label || 'Saved to disk'} · ${words} ${words === 1 ? 'word' : 'words'}`));
-      row.append(chatEl('div', 'history-excerpt',
-        item.text.trim().replace(/\s+/g, ' ').slice(0, 120) || 'Empty document'));
-      if (item.text === current) {
-        row.append(chatEl('div', 'history-current', 'Same as the text you have now'));
+      if (match) {
+        const matchEnd = match.index + match[0].length;
+        const start = Math.max(0, match.index - 60);
+        const end = Math.min(item.text.length, matchEnd + 90);
+        const excerpt = chatEl('div', 'history-match');
+        excerpt.append(
+          (start ? '…' : '') + item.text.slice(start, match.index),
+          chatEl('mark', '', match[0]),
+          item.text.slice(matchEnd, end) + (end < item.text.length ? '…' : ''),
+        );
+        row.append(excerpt);
+      }
+      if (item.text !== newer) {
+        const diff = chatEl('div', 'history-diff');
+        diff.setAttribute('aria-label', 'Changes in the next version');
+        const ops = wordDiff(item.text, newer);
+        const first = ops.findIndex(op => op.type !== 'keep');
+        const last = ops.findLastIndex(op => op.type !== 'keep');
+        let remaining = 1400;
+        for (let index = Math.max(0, first - 1); index <= Math.min(ops.length - 1, last + 1); index++) {
+          const { type, text } = ops[index];
+          const context = type === 'keep' && text.length > 100
+            ? index < first ? '…' + text.slice(-50) : index > last ? text.slice(0, 50) + '…' : text.slice(0, 50) + ' … ' + text.slice(-50)
+            : text;
+          const excerpt = context.slice(0, remaining);
+          if (type === 'keep') diff.append(excerpt);
+          else diff.append(chatEl(type === 'del' ? 'del' : 'ins', type === 'del' ? 'drift-del' : 'drift-ins', excerpt));
+          remaining -= excerpt.length;
+          if (!remaining) { if (excerpt.length < context.length || index < last) diff.append('…'); break; }
+        }
+        row.append(diff);
       } else {
-        // Full text fills in on first open: thirty versions must not build
-        // thirty <pre> nodes before the writer reads even one excerpt.
+        row.append(chatEl('div', 'history-current', 'No changes in the next version'));
+      }
+      if (item.text !== current) {
         const full = document.createElement('details');
         const preview = chatEl('pre', 'passage-preview', '');
         full.append(chatEl('summary', '', 'Full text'), preview);
@@ -3525,7 +3763,7 @@ document.getElementById('file-history').addEventListener('click', async () => {
   }
   search.addEventListener('input', renderHistory);
   try {
-  const { snapshots } = await api(draftUrl('/history'));
+    const { snapshots } = await api(draftUrl('/history'));
     const local = safeJson(docStorage.getItem('snapshots'), []);
     if (!Array.isArray(local)) throw new Error('Local history is corrupt');
     for (let i = 0; i < localStorage.length; i++) {
@@ -3537,7 +3775,7 @@ document.getElementById('file-history').addEventListener('click', async () => {
     }
     versions = [...local, ...snapshots].sort((a, b) => b.at.localeCompare(a.at));
     renderHistory();
-    modal.append(chatEl('small', 'history-note',
+    list.after(chatEl('small', 'history-note',
       'Last 20 disk versions and 10 browser checkpoints. Disk copies sit beside the draft in .stilura-history and are never deleted automatically.'));
   } catch (error) { list.append(chatEl('p', 'history-note', error.message)); }
 });

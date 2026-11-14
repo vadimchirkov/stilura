@@ -31,6 +31,7 @@ createInterface({ input: process.stdin }).on('line', line => {
   else if (method === 'session/new') {
     const options = params._meta.claudeCode.options;
     assert.match(options.systemPrompt, /Help with the SELECTED TEXT|<stilura-text>/);
+    assert.equal(options.model, 'sonnet');
     assert.deepEqual(options.tools, []);
     assert.deepEqual(params.mcpServers, []);
     assert.equal(options.persistSession, false);
@@ -84,13 +85,15 @@ try {
   // First run: the Model tab, ChatGPT chosen, its Sign in focused.
   await page.waitForFunction(() => document.getElementById('settings-dialog').open);
   assert.deepEqual(await page.$$eval('.settings-tabs [role="tab"]', tabs => tabs.map(tab => tab.textContent)), ['Model', 'General']);
-  assert.match(await page.$eval('#agent-provider', node => node.textContent), /ChatGPT/);
-  assert.equal(await page.evaluate(() => document.activeElement.id), 'connect-browser');
-  assert.match(await page.$eval('#settings-sub', node => node.textContent), /^Choose a model to start writing with AI/);
+  assert.equal(await visible('#api-model-settings'), false);
+  assert(await page.$$eval('.model-service img', images => images.length === 2 && images.every(image => image.naturalWidth > 0)));
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'service-chatgpt');
+  assert.match(await page.$eval('#settings-sub', node => node.textContent), /^Connect a service to start writing with AI/);
   assert.equal(await visible('#model-field'), false);
   assert.equal(await visible('#connect-key'), false);
 
   // Another provider: its key field replaces Model and Reasoning.
+  await page.click('#service-api');
   await page.click('#agent-provider');
   // The popover's toggle handler clears and focuses the search a task later.
   await page.waitForFunction(() => document.activeElement?.matches('#provider-combo .combo-search'));
@@ -121,15 +124,23 @@ try {
   await page.waitForFunction(() => !document.getElementById('connect-key').hidden);
   assert.equal(await page.evaluate(() => localStorage.getItem('wa-agent')), null);
 
-  await page.click('#agent-provider');
-  await page.waitForFunction(() => document.activeElement?.matches('#provider-combo .combo-search'));
-  await page.type('#provider-combo .combo-search', 'Claude Code');
-  await page.click('#provider-combo .combo-item[data-value="claude-code"]');
+  await page.click('#service-claude');
   assert.equal(await visible('#connect-claude'), true);
   assert.equal(await visible('#connect-key'), false);
   statusCommand(true);
   await page.click('#claude-recheck');
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('wa-agent'))?.provider === 'claude-code');
+  assert.equal(await visible('#model-field'), false);
+  assert.equal(await page.$eval('#service-claude', node => node.getAttribute('aria-current')), 'true');
+  await page.evaluate(() => document.getElementById('settings-dialog').close());
+  await page.click('#settings-open');
+  await page.waitForFunction(() => !document.getElementById('model-field').hidden);
+  assert.equal(await page.$eval('#service-claude', node => node.getAttribute('aria-pressed')), 'true');
+  await page.click('#agent-model');
+  await page.waitForFunction(() => document.activeElement?.matches('#model-combo .combo-search'));
+  await page.type('#model-combo .combo-search', 'Claude Sonnet');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('wa-agent'))?.model === 'sonnet');
   await page.evaluate(() => document.getElementById('settings-dialog').close());
   await page.waitForFunction(() => document.querySelector('.cm-content')?.innerText.includes('A quiet room.'));
   const editor = await page.$('.cm-content');
@@ -153,7 +164,7 @@ try {
   const write = await fetch(url + '/write', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ document: '/Write an ending', from: 0, cursor: 16,
-      instruction: 'Write an ending', agent: { provider: 'claude-code', model: 'default' } }),
+      instruction: 'Write an ending', agent: { provider: 'claude-code', model: 'sonnet' } }),
   });
   const stream = await write.text();
   assert.match(stream, /The door closed/);

@@ -11,6 +11,9 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stilura-generate-'));
 const pi = fs.readFileSync(path.join(root, 'pi.js'), 'utf8');
 const stub = pi.slice(0, pi.indexOf('export async function completeText(')) + String.raw`
 export async function completeText({ systemPrompt, userPrompt }) {
+  if (systemPrompt.startsWith('Suggest one short editing request')) {
+    return JSON.parse(userPrompt).passage === 'The room felt kind of quiet.' ? 'Cut “kind of”?' : 'NONE';
+  }
   const selected = userPrompt.split('SELECTED TEXT:\n')[1]?.split('\n\nREQUEST:')[0];
   if (userPrompt.includes('REPLACE_PASSAGE')) return 'A calmer word.<stilura-edits>' + JSON.stringify([{ label: 'Replace', quote: selected, replacement: 'peaceful' }]) + '</stilura-edits>';
   if (userPrompt.includes('WRONG_SCOPE')) return '<stilura-edits>' + JSON.stringify([{ label: 'Replace', quote: 'Another quiet room.', replacement: 'Elsewhere.' }]) + '</stilura-edits>';
@@ -119,6 +122,12 @@ try {
   const failure = await failed.text();
   assert.match(failure, /"error":"Simulated stream failure"/);
   assert.doesNotMatch(failure, /\[DONE\]/);
+  const hint = selected => fetch(base + '/passage-hint', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected }),
+  });
+  assert.deepEqual(await (await hint('The room felt kind of quiet.')).json(), { hint: 'Cut “kind of”?' });
+  assert.deepEqual(await (await hint('A quiet room.')).json(), { hint: '' });
+  assert.equal((await hint(' ')).status, 400);
   const ask = body => fetch(base + '/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const passage = { document: 'A quiet room. Another quiet room.', selected: 'quiet', from: 2, instruction: 'What does this word imply?' };
   const asked = await ask(passage);

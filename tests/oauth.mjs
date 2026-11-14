@@ -55,6 +55,26 @@ for (const model of agent.models.filter(model => model.provider === 'openai-code
   assert.deepEqual(notices, [{ text: 'Signed in with ChatGPT. Writing with GPT-6 Luna.', label: 'Change' }]);
 }
 
+// A successful callback closes the browser tab only after model status loads.
+{
+  let closed = 0, selected;
+  const context = vm.createContext({
+    oauthInfo: { active: { step: 'url' } },
+    oauthTab: { close() { closed++; } },
+    stopOAuthPoll() {},
+    oauthActivePending: () => context.oauthInfo.active.step === 'url',
+    api: async () => ({ active: { step: 'done', provider: 'openai-codex' } }),
+    refreshAgent: async () => { assert.equal(closed, 0); },
+    renderSubscriptions() {},
+    signedIn: provider => { selected = provider; },
+  });
+  vm.runInContext(appSection('function closeOAuthTab()', 'function stopOAuthPoll()')
+    + appSection('async function pollOAuth(', '// Signing in is choosing'), context);
+  await context.pollOAuth();
+  assert.equal(closed, 1);
+  assert.equal(selected, 'openai-codex');
+}
+
 // A model the subscription refuses falls back along the chain, then stops.
 assert.deepEqual(nextOfferedModel('openai-codex', 'gpt-6-luna'), { provider: 'openai-codex', id: 'gpt-5.6-terra' });
 assert.deepEqual(nextOfferedModel('openai-codex', 'gpt-5.6-terra'), { provider: 'openai-codex', id: 'gpt-5.6-luna' });

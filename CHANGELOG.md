@@ -2,6 +2,14 @@
 
 Stilura (renamed from Litura) follows [semantic versioning](https://semver.org). Until 1.0 the minor number carries breaking changes.
 
+## 0.7.3 — 2026-11-14
+
+- Guided model setup, compact service tabs in Settings, and model selection for Claude Code.
+- Contextual passage prompts and local request history with Tab completion.
+- Inline slash commands keep their geometry while generating.
+- Document history keeps search visible and shows inline changes and search matches.
+- File sidebar shows actions in place of the date on hover or keyboard focus.
+
 ## 0.7.2 — 2026-11-14
 
 - Added Claude Code for Pro and Max subscribers in Model settings. The local ACP adapter handles passage requests, slash generation and manual continuations.
