@@ -2,6 +2,11 @@
 
 Stilura (renamed from Litura) follows [semantic versioning](https://semver.org). Until 1.0 the minor number carries breaking changes.
 
+## 0.7.4 — 2026-11-15
+
+- Updated `tauri-build` and Tauri dependencies for Rust 1.100 compatibility so Linux and Windows desktop bundles pass smoke checks.
+- Updated the README walkthrough and overview.
+
 ## 0.7.3 — 2026-11-14
 
 - Guided model setup, compact service tabs in Settings, and model selection for Claude Code.

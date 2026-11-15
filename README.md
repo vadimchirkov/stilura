@@ -2,9 +2,23 @@
 
 # Stilura
 
-A local writing editor with AI continuations, answers and rewrites beside your text. Preview new wording, then accept it into your draft.
+Local AI writing enhancer that writes with you. Rewrite texts, generate paragraphs inline, and get next-line continuations - guided by 20 rules that clean AI-slop. Nothing changes until you pick it.
+
+```bash
+npx stilura
+```
 
 [![Stilura cleans the AI slop out of its own pitch: a ⌘K rewrite, picking between options, a / request, and the author keeping the last word](docs/demo.gif)](docs/demo.mp4)
+
+## How it works
+
+Every suggestion follows `style.md` in your folder: 20 named patterns to avoid (sales language, vague attribution, "not X but Y", forced triples, filler openers, stacked qualifiers, and more) while keeping your facts and voice intact. Spelling and grammar are checked offline in the browser with Harper.
+
+- **Change (`Cmd/Ctrl+K`)** — select text to ask a question, find synonyms, or preview rewrites in place (`↑`/`↓` to choose).
+- **Generate (`/`)** — type `/your request` at the end of a line and press `Enter` to draft in place.
+- **Continuations** — short next-line suggestions appear when you pause (`Cmd/Ctrl+Enter` on demand).
+
+`Tab` to accept, `Escape` to dismiss, `R` to regenerate. Unaccepted previews stay outside the saved draft.
 
 ## Run
 
@@ -12,101 +26,42 @@ A local writing editor with AI continuations, answers and rewrites beside your t
 npx stilura
 ```
 
-Requires Node.js 20+. Run from your writing folder; the editor opens at [localhost:3000](http://127.0.0.1:3000), or the next free port. On first run, sign in with ChatGPT (Plus or Pro) or open custom models to choose a provider, model and API key.
+Needs Node 20+. Opens [http://127.0.0.1:3000](http://127.0.0.1:3000) in your writing folder. On first run, sign in with ChatGPT (Plus/Pro) or choose a provider, model, and API key.
 
-Desktop builds: [Releases](https://github.com/vadimchirkov/stilura/releases) for macOS, Windows and Linux.
+**Desktop:** download from [Releases](https://github.com/vadimchirkov/stilura/releases) (`.dmg` / `.exe` / `.AppImage` / `.deb`).
 
-## Write
+**Shortcuts:** `Cmd/Ctrl+K` — change selection. `Cmd/Ctrl+Enter` — continuation. `Cmd/Ctrl+S` — download draft. `/` at line end — generate.
 
-- **Continue:** pause while typing to get a continuation. `Cmd/Ctrl+Enter` requests one explicitly.
-- **Change:** select text and click **Change**, or press `Cmd/Ctrl+K`. Ask a question, request a rewrite or find synonyms. For replacement options, use ↑/↓ to choose.
-- **Generate:** type `/` followed by a request at the end of a line, then press `Enter`. For example: `/Write a short introduction about urban gardens`.
+## Configuration
 
-`Tab` accepts a preview; `Escape` dismisses it or stops generation. `R` regenerates a passage replacement or generated text. Unaccepted previews stay outside the saved draft.
-
-## Settings and files
-
-Settings control the provider, model, reasoning level and appearance. Edit `style.md` in your writing folder to set the voice and constraints; changes apply without restarting.
-
-The draft saves to `draft.md` in that folder. Browser storage keeps a recovery copy. The desktop app also stores settings in its application data directory. `Cmd/Ctrl+S` downloads a copy of the draft.
-
-Override the draft or style path when starting:
+Use **Settings** to choose a provider, model, reasoning level, and theme. Stilura supports ChatGPT Plus/Pro sign-in, API keys, credentials stored by Pi, and **Claude Code** (Pro/Max via `npm i -g @agentclientprotocol/claude-agent-acp` and `claude auth login`).
 
 ```bash
 DRAFT_FILE=./article.md STYLE_FILE=./style.md npx stilura
 ```
 
-Model requests send draft text to your selected provider.
+Edit `style.md` to describe the voice and constraints to preserve. Changes apply without restarting.
 
-### Claude Code with Pro or Max
+Inline `/` requests can also use external MCP tools over Streamable HTTP when configured in `~/.config/stilura/mcp.json` (`chmod 600`).
 
-Install [Claude Code](https://code.claude.com/docs/en/setup) and run
-`npm install -g @agentclientprotocol/claude-agent-acp` to install the local
-adapter. Run `claude auth login` and sign in with your subscription. In
-**Settings → Model**, select **Claude Code · Pro/Max**. If you signed in
-with the dialog already open, click **Check connection**.
+## Data
 
-Both commands must be on the app’s PATH. If a desktop launch cannot find
-them, start Stilura from the terminal or set `STILURA_CLAUDE_CODE` and
-`STILURA_CLAUDE_ACP` to their absolute executable paths. Claude Code must
-report a Pro or Max session. Stilura uses it for passage changes, slash
-generation and manual continuations (`Cmd/Ctrl+Enter`). Requests use
-text-only agent sessions, with no tools, including MCP.
-
-### Optional MCP connections
-
-Inline slash requests (`/your request`, then Enter) can use external tools over
-Streamable HTTP. Configure connections separately in
-`~/.config/stilura/mcp.json`, outside the repository:
-
-```json
-{
-  "mcpServers": {
-    "notes": {
-      "url": "https://mcp.example.com/mcp",
-      "headers": { "Authorization": "Bearer YOUR_TOKEN" },
-      "tools": ["search"],
-      "instructions": "Use mcp_notes_search to find relevant source material before writing."
-    }
-  }
-}
-```
-
-Set `tools` to the remote tool names you want the model to use; omitting it
-exposes all tools from that server. Names are prefixed with `mcp_<server>_`
-(hyphens in server names become underscores). Configuring a small list keeps
-model context small. Server-specific instructions belong in this local
-configuration, not in the app's source.
-
-Restrict the file to your account (`chmod 600 ~/.config/stilura/mcp.json`).
-`STILURA_MCP_CONFIG` overrides its path. Set `"enabled": false` to disable a
-connection. Without a configuration, generation works without external tools.
-Configuration is read for each slash request; connections and tool catalogs are
-reused. Catalogs refresh after server notifications or connection failures.
-Failed calls are not retried automatically, since a write may already have
-reached its destination. Generation correction also stops after tool use to avoid
-repeating external writes. Tool results are sent to the selected model provider.
-
-Chat, autocomplete and passage rewrites do not use MCP. Local `mcp.json`,
-`mcp.local.json` and `.stilura/` are ignored by Git; the published package
-contains only the generic client, never your connection configuration.
+The draft lives in `draft.md` in your folder, with a recovery copy in browser local storage (and under the application data directory on desktop). Nothing leaves the machine except model requests to the provider you chose.
 
 ## Development
 
 ```bash
 git clone https://github.com/vadimchirkov/stilura.git
-cd stilura
-npm install
-npm start
+cd stilura && npm install && npm start
 ```
 
-Node.js HTTP server, CodeMirror 6 frontend and Tauri desktop shell.
+Node native HTTP server. Vanilla JS frontend with CodeMirror 6, bundled by esbuild (`src/app.js` → `public/app.js`), and Tauri desktop shell.
 
 ```bash
 npm run build       # bundle frontend
-npm run check       # build and tests
-npm run test:editor # browser checks for generation editing and cursor placement; needs Puppeteer
-npm run desktop     # desktop development; requires Rust and Tauri prerequisites
+npm run check       # lint + tests
+npm run test:editor # browser checks (needs Puppeteer)
+npm run desktop     # Tauri desktop shell (needs Rust + Tauri prerequisites)
 ```
 
 [API and storage details](SPEC.md) · [Agent workflow](skills/stilura/SKILL.md)
