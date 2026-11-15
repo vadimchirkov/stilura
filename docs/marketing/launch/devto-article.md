@@ -1,11 +1,8 @@
 # dev.to article
 
-> **Before posting:** HN, DEV and several subreddits remove AI-written posts. This draft was reworked to sound less generated, which lowers the risk but doesn't remove it. Reword it yourself before you post, then set DEV's disclosure honestly ("Hand Written" only if it is).
-
 Notes for publishing:
 
-- DEV says AI-assisted articles should not promote your own product. If after your edit you can't honestly call this hand-written, cut the promo or post it elsewhere.
-- Sentences marked [confirm] are about your own habits or reasons. Keep them only if they're true.
+- DEV says AI-assisted articles should not promote your own product. If you can't honestly call this hand-written, cut the promo or post it elsewhere.
 - Tags: `writing`, `opensource`, `markdown`, `ai`. Cover image: `docs/marketing/assets/og-image.png`. Body GIF: `https://raw.githubusercontent.com/vadimchirkov/stilura/main/docs/demo.gif`.
 
 ---
@@ -30,9 +27,7 @@ A caveat, since it matters for a post like this. The GIF in the README is a scri
 
 ## Why it lives in the document
 
-My old way was a chat tab. Copy a paragraph over, ask for "a bit shorter", get back something shorter that also changed a number and added "Moreover", copy the one sentence I liked, paste it back, fix the formatting. [confirm]
-
-The model wasn't really the problem. The chat was. It answers for the whole passage, and each answer replaces the last one. I wanted the edit to happen on the words I selected, with a few versions to flip through or ignore, and my file to stay put until I said so.
+When you edit in a chat tab, the model isn't really the problem. The chat is. It answers for the whole passage, and each answer replaces the last one. I wanted the edit to happen on the words I selected, with a few versions to flip through or ignore, and my file to stay put until I said so.
 
 So `⌘K` (`Ctrl+K` on Windows and Linux) works on a selection, and `↑`/`↓` moves between what comes back. A `/` at the end of a line plus a request, say `/one line on pricing and models`, writes right there when you press `Enter`, and `R` asks for another take. If you stop typing for a moment, a gray continuation shows up. `Esc` drops any of these. None of it reaches `draft.md` until you press `Tab`.
 
@@ -46,7 +41,7 @@ I haven't measured whether any of this makes text better. Stilura isn't a detect
 
 ## Models
 
-I didn't want another subscription [confirm], so it signs in with ChatGPT Plus or Pro through a device code, or talks to Claude Code on a Pro or Max plan through a local ACP adapter. An API key works too. When you ask for something, the text goes to that provider. The editor and the file stay on your machine.
+It signs in with ChatGPT Plus or Pro through a device code, or talks to Claude Code on a Pro or Max plan through a local ACP adapter. An API key works too. When you ask for something, the text goes to that provider. The editor and the file stay on your machine.
 
 ## How it's built
 

@@ -1,7 +1,5 @@
 # X thread
 
-> **Before posting:** HN, DEV and several subreddits remove AI-written posts, and people on X call it out. This thread was reworked to sound less generated, which lowers the risk but doesn't remove it. Reword it yourself before posting.
-
 Post 1 carries the video. Upload `docs/demo.gif` (or `video/stilura-4x5.mp4` if you want sound-off autoplay with captions). Pin the thread. Each post is under 280 characters (checked; links counted at full length).
 
 ## 1 (attach docs/demo.gif)

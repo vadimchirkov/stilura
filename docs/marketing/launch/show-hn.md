@@ -1,8 +1,6 @@
 # Show HN
 
-> **Before posting:** HN, DEV and several subreddits remove AI-written posts. This draft was reworked to sound less generated, which lowers the risk but doesn't remove it. Reword it yourself before you post.
-
-When: Tuesday or Wednesday, 9:00 AM PT, on a day you can stay in the thread for six hours (channels.md). Don't ask anyone to upvote. The sentence marked [confirm] is about your own reasons; keep it only if it's true.
+When: Tuesday or Wednesday, 9:00 AM PT, on a day you can stay in the thread for six hours (channels.md). Don't ask anyone to upvote.
 
 ## Title (≤80 characters)
 
@@ -20,9 +18,6 @@ The README opens with docs/demo.gif, so that's the first thing people see. No la
 Hi HN, I'm Vadim. Stilura is a Markdown editor that runs on your machine,
 either `npx stilura` or a desktop build from the Releases page. The AI works
 inside the text, not in a chat panel next to it.
-
-I got tired of pasting paragraphs into a chat tab and pasting one good
-sentence back. [confirm]
 
 You select a sentence, hit Cmd/Ctrl+K and say what you want. The options show
 up where the sentence was. Arrow keys flip between them, Tab keeps one, Esc

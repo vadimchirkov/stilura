@@ -1,7 +1,5 @@
 # Messaging kit
 
-> **Before posting anything built from this file:** HN, DEV and several subreddits remove AI-written posts. The hooks were reworked to sound less generated, which lowers the risk but doesn't remove it. Reword them yourself.
-
 Source of truth for every post. If a line here and a post disagree, fix the post. Every claim below points at the file that backs it.
 
 ## One-liner (≤12 words)

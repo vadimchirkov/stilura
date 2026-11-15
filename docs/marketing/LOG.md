@@ -24,3 +24,5 @@
 - Founder: repo description changed to "Local Markdown editor that writes with you. You pick the version. npx stilura" (keeps "writes with you").
 - Founder: repo description changed to "AI-assisted text editor that writes with you.".
 - Founder: topics ai-text-humanizer and ai-writing-detection restored.
+- Founder decision, [confirm] cut: removed every [confirm]-tagged sentence and the "Before posting ... reword it yourself" banner from the launch drafts and messaging.md. Sentences cut: show-hn 1, devto-article 2, product-hunt 1, r/ClaudeAI 2 (plus the title now says "a Claude Pro or Max plan" instead of "my Claude Max plan"), r/ChatGPTPro 2; the notes lines that explained [confirm] went too. grep for [confirm] is empty, X posts 164-258 chars, slop-check hits are only quoted slop, the banned-word list and the rule word "showcase". Nothing committed or posted.
+- Posting scheduled: 17 one-time tasks (stilura-d00 … stilura-d14) follow POSTING.md and calendar.md; results go to POSTED.md.

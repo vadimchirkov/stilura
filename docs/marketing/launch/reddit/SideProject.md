@@ -1,7 +1,5 @@
 # r/SideProject
 
-> **Before posting:** HN, DEV and several subreddits remove AI-written posts. This draft was reworked to sound less generated, which lowers the risk but doesn't remove it. Reword it yourself before you post.
-
 No sub-specific promo rule; the sub is for sharing projects. Reddit's ~10% guideline applies. Lead with the GIF; people here like build details.
 
 ## Title

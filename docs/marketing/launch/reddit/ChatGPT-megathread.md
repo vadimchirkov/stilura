@@ -1,7 +1,5 @@
 # r/ChatGPT: weekly self-promotion megathread only
 
-> **Before posting:** HN, DEV and several subreddits remove AI-written posts. This comment was reworked to sound less generated, which lowers the risk but doesn't remove it. Reword it yourself before you post.
-
 Not a standalone post. r/ChatGPT sends posts that advertise a tool to the pinned weekly self-promotional megathread. Comment there once. Needs 5 comment karma.
 
 ## Comment

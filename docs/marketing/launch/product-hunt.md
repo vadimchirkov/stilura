@@ -1,7 +1,5 @@
 # Product Hunt
 
-> **Before posting:** HN, DEV and several subreddits remove AI-written posts, and PH commenters notice it too. This copy was reworked to sound less generated, which lowers the risk but doesn't remove it. Reword it yourself before it goes live.
-
 Launch: 12:01 AM PT on the scheduled day (Day 7 in calendar.md). Save as a draft first; schedule only when complete. Ask for feedback, never for upvotes.
 
 ## Name (≤40)
@@ -48,13 +46,8 @@ Video (optional): PH takes a YouTube link. If you upload `video/stilura-4x5.mp4`
 
 ## Maker comment
 
-The [confirm] sentence is about your own reasons; keep it only if it's true.
-
 ```
 Hi, I'm Vadim. I built Stilura.
-
-I kept pasting paragraphs into a chat tab and copying one sentence back, and
-wanted that to happen in the file instead. [confirm]
 
 You select a passage, press ⌘K, say what you want and ↑/↓ through the
 versions. Tab keeps one. A / request at the end of a line writes right there;
