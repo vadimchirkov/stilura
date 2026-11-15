@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stilura — 28s demo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+@font-face {
+  font-family: 'iA Writer Duo';
+  src: url('iAWriterDuoS-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: block;
+}
+:root {
+  --bg: #f7f5f0;
+  --surface-2: #f0ede5;
+  --surface-3: #e6e2d8;
+  --border: #0000001a;
+  --text: #0d0d0d;
+  --text-2: #5d5d5d;
+  --muted: #6b6b6b;
+  --accent: #316ecf;
+  --attached-tint: color-mix(in srgb, var(--accent) 18%, var(--bg));
+  --ui-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font: 'iA Writer Duo', Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; background: #000; overflow: hidden; }
+
+/* 1920×1080 master (or 1080×1350 with ?format=4x5), scaled to fit the browser window. */
+#stage {
+  position: absolute; left: 50%; top: 50%;
+  width: 1920px; height: 1080px;
+  overflow: hidden;
+  background: #e4e0d7;
+  transform-origin: 0 0;
+}
+
+/* The app window: 1280×720 logical, moved by the camera. */
+#win {
+  position: absolute; left: 0; top: 0;
+  width: 1280px; height: 720px;
+  overflow: hidden;
+  background: var(--bg);
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px #0000001a, 0 12px 40px 0 #0000002e;
+  transform-origin: 0 0;
+}
+.lights { position: absolute; left: 18px; top: 18px; display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.lights i:nth-child(2) { background: #febc2e; }
+.lights i:nth-child(3) { background: #28c840; }
+.icon-btn {
+  position: absolute; top: 10px;
+  display: grid; place-items: center;
+  width: 32px; height: 32px;
+  color: var(--muted);
+}
+.icon-btn svg { width: 16px; height: 16px; }
+.shortcuts {
+  position: absolute; inset: auto 0 0;
+  display: flex; justify-content: center; gap: 4px 20px;
+  padding: 40px 16px 8px; min-height: 36px;
+  color: var(--muted);
+  font: 13px/1.4 var(--ui-font);
+}
+.shortcuts kbd { font: inherit; font-weight: 500; color: var(--text-2); }
+
+/* The prose column, same measure and type as the editor. */
+#doc {
+  position: relative;
+  width: clamp(52ch, 100% - 488px, 68ch);
+  margin: 0 auto;
+  padding-top: 48px;
+  font: 17px/1.75 var(--font);
+  color: var(--text);
+}
+#doc p { min-height: 1.75em; margin-bottom: 1.75em; white-space: pre-wrap; }
+#doc span { box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.sel { background: var(--attached-tint); }
+.busy { color: transparent; border-radius: 4px; background-size: 400% 100%;
+  background-image: linear-gradient(90deg, var(--surface-3) 25%, var(--surface-2) 37%, var(--surface-3) 63%); }
+.variant { border-bottom: 1px dashed var(--accent); border-radius: 4px; }
+.ghost { color: var(--text); }
+.caret {
+  display: inline-block; width: 0; height: 1.2em;
+  margin-right: -1.5px; vertical-align: -0.25em;
+  border-left: 1.5px solid var(--accent);
+}
+/* "/" at line start: the line becomes a request strip. */
+#doc p.slash {
+  background: var(--attached-tint); border-radius: 2px;
+  box-shadow: -.42em 0 var(--attached-tint);
+}
+
+/* ⌘K request bubble */
+.bubble {
+  position: absolute;
+  min-width: 160px; max-width: 360px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: #0d0d0d; color: #fff;
+  font: 13px/1.5 var(--ui-font);
+  white-space: pre-wrap;
+  transform-origin: 0 0;
+}
+.bubble .ph { opacity: .6; }
+.bubble .bcaret { display: inline-block; width: 0; height: 1.2em; vertical-align: -0.25em; border-left: 1px solid #fff; }
+
+/* Key overlay, drawn on the video frame, not in the app. */
+#key {
+  position: absolute; left: 50%; bottom: 72px;
+  padding: 10px 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  box-shadow: 0 4px 16px 0 #0000001f;
+  color: var(--text-2);
+  font: 500 32px/1.3 var(--ui-font);
+  white-space: nowrap;
+  opacity: 0;
+}
+#fade { position: absolute; inset: 0; background: var(--bg); opacity: 0; pointer-events: none; }
+#clock { position: fixed; right: 8px; bottom: 6px; color: #888; font: 12px var(--ui-font); display: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="win">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="icon-btn" style="left:76px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12"/><path d="M9 4l0 16"/></svg>
+    </div>
+    <div class="icon-btn" style="right:12px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></svg>
+    </div>
+    <div id="doc"></div>
+    <div class="shortcuts"><span><kbd>/</kbd> generate text</span><span><kbd>Tab</kbd> accept</span><span><kbd>R</kbd> regenerate</span></div>
+  </div>
+  <div id="key"></div>
+  <div id="fade"></div>
+</div>
+<div id="clock"></div>
+
+<script>
+// Every frame is a pure function of t (seconds, 0–28), so the loop is
+// seamless, scrubbable, and records identically every time.
+// ?format=4x5 renders the 1080×1350 feed cut.
+// Keys: Space pause · ←/→ step 0.5s · ?t=12 start at 12s · ?debug shows the clock.
+const DUR = 28;
+
+const S    = 'In today’s fast-paced AI landscape, Stilura serves as a groundbreaking testament to seamless writing—delving into your workflow.';
+const HEAD = 'Stilura is a local Markdown editor ';
+const TAIL = 'where AI suggests and you decide.';
+const V    = ['that stays out of your way.', 'that never rewrites your voice.', 'where you keep the last word.'];
+const ASK1 = 'kill the AI slop. say what it actually is.';
+const ASK2 = 'sharper';
+const SLASH = 'one line on pricing and models';
+const L2   = ['Bring your own ChatGPT Plus, Claude Code, or API key.', 'No new subscription. Uses your ChatGPT, Claude, or API key.'];
+const GHOST = 'Try it in your browser.';
+const CMD  = 'npx stilura';
+
+const KEYS = [
+  ['⌘K', 2.45], ['Enter', 5.05], ['Tab', 6.85],
+  ['⌘K', 8.65], ['Enter', 9.7], ['↓', 11.25], ['↓', 12.05], ['Tab', 13.2],
+  ['/', 14.25], ['Enter', 15.85], ['R', 17.8], ['Tab', 19.6],
+  ['Esc', 22.6],
+];
+
+// ── easing ────────────────────────────────────────────────────────────
+const clamp01 = x => Math.min(1, Math.max(0, x));
+function bezier(x1, y1, x2, y2) {
+  return x => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let u = x;
+    for (let i = 0; i < 8; i++) {
+      const bx = 3 * x1 * u * (1 - u) ** 2 + 3 * x2 * u * u * (1 - u) + u ** 3 - x;
+      const d = 3 * x1 * (1 - u) ** 2 + 6 * (x2 - x1) * u * (1 - u) + 3 * (1 - x2) * u * u;
+      if (Math.abs(d) < 1e-6) break;
+      u = clamp01(u - bx / d);
+    }
+    return 3 * y1 * u * (1 - u) ** 2 + 3 * y2 * u * u * (1 - u) + u ** 3;
+  };
+}
+const easeApp    = bezier(.16, 1, .3, 1);     // --ease
+const easeMenu   = bezier(.22, 1, .36, 1);    // --dropdown-ease / --modal-ease
+const easeOut    = bezier(0, 0, .58, 1);
+const easeInOut  = bezier(.42, 0, .58, 1);
+const easeCamera = bezier(.65, 0, .35, 1);
+
+// Typing with a little human unevenness, still deterministic.
+function typed(str, t0, t1, t) {
+  const n = str.length, span = t1 - t0;
+  let count = 0;
+  for (let i = 0; i < n; i++) {
+    const jitter = ((Math.sin((i + 1) * 78.233) * 43758.5453) % 1) * 0.5;
+    if (t >= t0 + span * (i + 0.5 + jitter) / (n + 0.5)) count = i + 1;
+  }
+  return str.slice(0, count);
+}
+
+// ── segments ──────────────────────────────────────────────────────────
+const pl      = s => ({ k: 'pl', s });
+const sel     = (s, anchor) => ({ k: 'sel', s, anchor });
+const busy    = s => ({ k: 'busy', s });
+const variant = s => ({ k: 'variant', s });
+const flash   = (s, t0) => ({ k: 'flash', s, t0 });
+const ghost   = (s, a) => ({ k: 'ghost', s, a });
+const caret   = act => ({ k: 'caret', act });
+
+// While typing the caret stays solid; afterwards it blinks (0.6s on/off).
+const typingAct = (t, t1) => (t < t1 ? t : t1);
+
+function build(t) {
+  const paras = [];
+  let bubble = null;
+
+  // ── Paragraph A: the slop sentence, then the pitch ────────────────
+  let A;
+  if (t < 1.0) A = [pl(S), caret(0)];
+  else if (t < 1.4) {
+    const n = Math.round(S.length * easeApp((t - 1.0) / 0.4));
+    A = [sel(S.slice(0, n)), caret(t), pl(S.slice(n))];
+  } else if (t < 5.2) {
+    A = [sel(S, true)];
+    if (t < 2.5) A.push(caret(1.4));
+    else bubble = { open: 2.5, close: 5.2, ph: 'Too much?', text: typed(ASK1, 2.8, 4.85, t) };
+  } else if (t < 6.1) A = [busy(S)];
+  else if (t < 6.9) A = [variant(HEAD + TAIL)];
+  else if (t < 8.1) A = [flash(HEAD + TAIL, 6.9), caret(6.9)];
+  else if (t < 8.45) {
+    const n = Math.round(TAIL.length * easeApp((t - 8.1) / 0.35));
+    A = [pl(HEAD), sel(TAIL.slice(0, n)), caret(t), pl(TAIL.slice(n))];
+  } else if (t < 9.85) {
+    A = [pl(HEAD), sel(TAIL, true)];
+    if (t < 8.7) A.push(caret(8.45));
+    else bubble = { open: 8.7, close: 9.85, ph: 'Say it plainly.', text: typed(ASK2, 8.95, 9.45, t) };
+  } else if (t < 10.5) A = [pl(HEAD), busy(TAIL)];
+  else if (t < 13.3) A = [pl(HEAD), variant(V[t < 11.3 ? 0 : t < 12.1 ? 1 : 2])];
+  else {
+    A = [pl(HEAD), flash(V[2], 13.3)];
+    if (t < 14.0) A.push(caret(13.3));
+  }
+  paras.push({ segs: A });
+
+  // ── Paragraph B: slash request ───────────────────────────────────
+  if (t >= 14.0) {
+    let B, cls = '';
+    if (t < 14.3) B = [caret(14.0)];
+    else if (t < 15.95) {
+      cls = 'slash';
+      B = [pl(typed(SLASH, 14.45, 15.7, t)), caret(typingAct(t, 15.7))];
+    } else if (t < 16.7) B = [busy(L2[0])];
+    else if (t < 17.9) B = [variant(L2[0])];
+    else if (t < 18.55) B = [busy(L2[1])];
+    else if (t < 19.7) B = [variant(L2[1])];
+    else {
+      B = [flash(L2[1], 19.7)];
+      if (t < 21.0) B.push(caret(19.7));
+    }
+    paras.push({ segs: B, cls });
+  }
+
+  // ── Paragraph C: ghost declined, author types ─────────────────────
+  if (t >= 21.0) {
+    let C;
+    if (t < 21.7) C = [caret(21.0)];
+    else if (t < 22.85) {
+      const a = t < 22.7 ? easeOut((t - 21.7) / 0.2) : 1 - (t - 22.7) / 0.15;
+      C = [caret(21.7), ghost(GHOST, a)];
+    } else if (t < 23.0) C = [caret(22.85)];
+    else C = [pl(typed(CMD, 23.0, 24.2, t)), caret(typingAct(t, 24.2))];
+    paras.push({ segs: C });
+  }
+
+  return { paras, bubble };
+}
+
+// ── render ────────────────────────────────────────────────────────────
+const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+function segHTML(g, t) {
+  switch (g.k) {
+    case 'pl': return esc(g.s);
+    case 'sel': return `<span class="sel${g.anchor ? ' anchor' : ''}">${esc(g.s)}</span>`;
+    case 'busy': {
+      const p = easeInOut((t % 1.4) / 1.4);
+      return `<span class="busy" style="background-position:${100 - 100 * p}% 50%">${esc(g.s)}</span>`;
+    }
+    case 'variant': return `<span class="variant">${esc(g.s)}</span>`;
+    case 'flash': {
+      const a = 100 * (1 - easeOut(clamp01((t - g.t0) / 1.2)));
+      return a > 0.5
+        ? `<span style="border-radius:4px;background:color-mix(in srgb, var(--attached-tint) ${a.toFixed(1)}%, transparent)">${esc(g.s)}</span>`
+        : esc(g.s);
+    }
+    case 'ghost': return `<span class="ghost" style="opacity:${(0.45 * clamp01(g.a)).toFixed(3)}">${esc(g.s)}</span>`;
+    case 'caret': {
+      const on = Math.floor(Math.max(0, t - g.act) / 0.6) % 2 === 0;
+      return `<span class="caret" style="opacity:${on ? 1 : 0}"></span>`;
+    }
+  }
+}
+
+function bubbleHTML(b, t) {
+  // Open: 250ms, scale .97 → 1. Close: 150ms to .99, fading.
+  let o, s;
+  if (t < b.open + 0.25) { const p = easeMenu((t - b.open) / 0.25); o = p; s = 0.97 + 0.03 * p; }
+  else if (t > b.close - 0.15) { const p = easeMenu((t - (b.close - 0.15)) / 0.15); o = 1 - p; s = 1 - 0.01 * p; }
+  else { o = 1; s = 1; }
+  const body = b.text
+    ? `${esc(b.text)}<span class="bcaret"></span>`
+    : `<span class="bcaret"></span><span class="ph">${esc(b.ph)}</span>`;
+  return `<div class="bubble" style="opacity:${o.toFixed(3)};transform:scale(${s.toFixed(4)})">${body}</div>`;
+}
+
+const stage = document.getElementById('stage');
+const win = document.getElementById('win');
+const doc = document.getElementById('doc');
+const keyEl = document.getElementById('key');
+const fade = document.getElementById('fade');
+const clock = document.getElementById('clock');
+
+function placeBubble() {
+  const bubbleEl = doc.querySelector('.bubble');
+  const anchor = doc.querySelector('.anchor');
+  if (!bubbleEl || !anchor) return;
+  const rects = anchor.getClientRects();
+  const box = doc.getBoundingClientRect();
+  const k = box.width / doc.offsetWidth;
+  const first = rects[0], last = rects[rects.length - 1];
+  bubbleEl.style.left = `${(first.left - box.left) / k}px`;
+  bubbleEl.style.top = `${(last.bottom - box.top) / k + 10}px`;
+}
+
+// Formats. Default: 1920×1080 master. ?format=4x5: 1080×1350 feed cut, where
+// the app window itself goes portrait (864×1080), so the column narrows to
+// 52ch exactly as the real editor does in a narrow window.
+const FMT = new URLSearchParams(location.search).get('format') === '4x5'
+  ? { w: 1080, h: 1350, winW: 864, winH: 1080, close: 1.7, wide: 1.0 }
+  : { w: 1920, h: 1080, winW: 1280, winH: 720, close: 2.2, wide: 1.25 };
+stage.style.width = `${FMT.w}px`; stage.style.height = `${FMT.h}px`;
+win.style.width = `${FMT.winW}px`; win.style.height = `${FMT.winH}px`;
+
+// Camera: a close-up on the column, pulling back at 25s to the whole window.
+const CLOSE = { s: FMT.close, x: FMT.w / 2 - FMT.winW / 2 * FMT.close, y: -6 * FMT.close };
+const WIDE  = { s: FMT.wide, x: (FMT.w - FMT.winW * FMT.wide) / 2, y: (FMT.h - FMT.winH * FMT.wide) / 2 };
+function camera(t) {
+  const p = easeCamera(clamp01((t - 25.0) / 2.0));
+  const lerp = (a, b) => a + (b - a) * p;
+  win.style.transform = `translate(${lerp(CLOSE.x, WIDE.x)}px, ${lerp(CLOSE.y, WIDE.y)}px) scale(${lerp(CLOSE.s, WIDE.s)})`;
+}
+
+function key(t) {
+  let cur = null;
+  for (const [label, kt] of KEYS) if (t >= kt && t < kt + 0.8) cur = [label, kt];
+  if (!cur) { keyEl.style.opacity = 0; return; }
+  const [label, kt] = cur, age = t - kt;
+  // In like the island (blur → sharp, .97 → 1); out in 150ms.
+  let o, s, blur;
+  if (age < 0.25) { const p = easeMenu(age / 0.25); o = p; s = 0.97 + 0.03 * p; blur = 4 * (1 - p); }
+  else if (age > 0.65) { const p = (age - 0.65) / 0.15; o = 1 - p; s = 1; blur = 0; }
+  else { o = 1; s = 1; blur = 0; }
+  keyEl.textContent = label;
+  keyEl.style.opacity = o;
+  keyEl.style.filter = blur ? `blur(${blur}px)` : 'none';
+  keyEl.style.transform = `translateX(-50%) scale(${s})`;
+}
+
+let lastHTML = '';
+function frame(t) {
+  const { paras, bubble } = build(t);
+  let html = paras.map(p => `<p${p.cls ? ` class="${p.cls}"` : ''}>${p.segs.map(g => segHTML(g, t)).join('')}</p>`).join('');
+  if (bubble) html += bubbleHTML(bubble, t);
+  if (html !== lastHTML) { doc.innerHTML = html; lastHTML = html; }
+  camera(t);
+  placeBubble();
+  key(t);
+  fade.style.opacity = clamp01((t - 27.55) / 0.45);
+  clock.textContent = t.toFixed(2) + 's';
+}
+
+// ── playback ──────────────────────────────────────────────────────────
+function fit() {
+  const k = Math.min(innerWidth / FMT.w, innerHeight / FMT.h);
+  stage.style.transform = `scale(${k}) translate(-50%, -50%)`;
+}
+addEventListener('resize', fit);
+fit();
+
+const params = new URLSearchParams(location.search);
+if (params.has('debug')) clock.style.display = 'block';
+let offset = parseFloat(params.get('t')) || 0;
+let paused = params.has('paused');
+let base = performance.now();
+const now = () => paused ? offset : (offset + (performance.now() - base) / 1000) % DUR;
+
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { offset = now(); paused = !paused; base = performance.now(); e.preventDefault(); }
+  if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') {
+    offset = (now() + (e.code === 'ArrowRight' ? 0.5 : -0.5) + DUR) % DUR;
+    base = performance.now();
+  }
+});
+
+// ?render: no clock. scripts/render-demo.mjs calls renderAt(t) per frame.
+const fontReady = document.fonts.load("17px 'iA Writer Duo'");
+if (params.has('render')) {
+  window.renderAt = async t => { await fontReady; frame(t); };
+} else {
+  fontReady.finally(() => {
+    base = performance.now();
+    (function loop() { frame(now()); requestAnimationFrame(loop); })();
+  });
+}
+</script>
+</body>
+</html>

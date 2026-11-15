@@ -4,7 +4,7 @@
 
 A local writing editor with AI continuations, answers and rewrites beside your text. Preview new wording, then accept it into your draft.
 
-![Stilura: continue a thought, shorten a sentence, and generate an ending](docs/demo.gif)
+[![Stilura cleans the AI slop out of its own pitch: a ⌘K rewrite, picking between options, a / request, and the author keeping the last word](docs/demo.gif)](docs/demo.mp4)
 
 ## Run
 
