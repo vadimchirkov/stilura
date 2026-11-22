@@ -141,6 +141,25 @@
 3. Нет теста ретрая `length` после mandatory-reasoning фолбэка (`pi.js`, `tests/pi-length.mjs`).
 4. P1 #17: нет теста на гонку `clear`/in-flight для дедупликации `GET /api/agent/status`.
 
+Из финального прохода (low, не блокеры):
+
+- `review.js` / `ai-routes.js` (P1 #15): `preserveIndent` для inline-вставки сохраняет ведущий пробел ответа модели, при `before` с хвостовым пробелом выходит двойной пробел; строка из одних пробелов в начале не снимается.
+- `src/features/generate.js`, `src/features/passage.js` (P1 #11): retry при изменённом документе молча делает `return` без уведомления; ветка не покрыта тестом.
+- `pi.js` (P1 #16): гонка OAuth success и TTL, `step='done'` может перезаписать `'error'` (`session.timedOut` не проверяется).
+- `extension/background.js` (P2 #26): `notice` от `/write` в расширении игнорируется, при нём уходит пустой `send({text:''})`.
+- `tests/generation.mjs`: неиспользуемый импорт `appSource`.
+
+**Переиспользовать процесс `claude-agent-acp`** (идея оператора, статус: не начато).
+
+Сейчас `askClaudeCode` (`claude-code.js`) на каждый запрос запускает новый процесс адаптера через `connectAcp`, делает `initialize` + `session/new` + `prompt` и закрывает его в `finally`. Поэтому автоподсказки при паузе отключены для claude-code (`src/app.js` `backgroundAllowed`, `extension/background.js:118`). У `antigravity.js` процесс переиспользуется (`IDLE_TTL` 5 мин, `session/new` + `session/close` на запрос).
+
+Что проверить:
+1. Умеет ли `claude-agent-acp` несколько `session/new` в одном процессе и принимает ли `systemPrompt`/`_meta.claudeCode.options` на каждую сессию отдельно.
+2. Замерить задержку запроса сейчас (холодный старт) и с тёплым процессом.
+3. Что происходит с настройками (`model`, `tools: []`, `maxTurns: 1`, `persistSession: false`) при переиспользовании, нет ли утечки контекста между запросами.
+
+Что сделать при успехе: вынести общий пул процесса из `antigravity.js` в `acp-client.js` (idle TTL, закрытие по abort), перевести `claude-code.js` на него; после замера решить, разрешать ли автоподсказки для Claude (отдельный переключатель в Settings, по умолчанию выключен). Для agy автоподсказки остаются выключены из-за ~19k токенов контекста на запрос.
+
 Также: `settled()` в `tests/files-browser.mjs` ждёт 300 мс тишины, на медленном CI может флакать; нужно ждать конкретного условия.
 
 ---
