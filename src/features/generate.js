@@ -247,6 +247,7 @@ export function createGenerate({
 
   async function generateFromLine(view, line, instruction) {
     const document = view.state.doc.toString(), key = docState.documentKey;
+    const retryLine = { from: line.from, to: line.to, text: line.text };
     const inline = line.from > view.state.doc.lineAt(line.from).from;
     const previous = view.state.field(generationField);
     const previousText = previous?.phase === 'review' ? previous.text : null;
@@ -292,7 +293,22 @@ export function createGenerate({
     } catch (error) {
       if (!job.signal.aborted) {
         const problem = modelError(error);
-        notifyProblem({ ...problem, say: `${/^The model repeated/.test(error.message) ? error.message : problem.say} ${previousText === null ? 'Your request is unchanged; press Enter to retry.' : 'The previous suggestion is kept.'}` }, null, 'Try again', 'write-error');
+        const retry = () => {
+          if (docState.documentKey !== key || paused() || view.state.readOnly) return;
+          if ([...jobs].some(active => !active.background)) { notify('Wait for the current request or stop it first.'); return; }
+          const currentGen = view.state.field(generationField);
+          if (previousText !== null) {
+            if (!currentGen || currentGen.phase !== 'review' || currentGen.text !== previousText) return;
+            if (currentGen.from < 0 || currentGen.to > view.state.doc.length
+              || view.state.doc.sliceString(currentGen.from, currentGen.to) !== currentGen.quote) return;
+            return generateFromLine(view, { from: currentGen.from, to: currentGen.to, text: currentGen.quote }, instruction);
+          }
+          if (currentGen) return;
+          if (retryLine.from < 0 || retryLine.to > view.state.doc.length
+            || view.state.doc.sliceString(retryLine.from, retryLine.to) !== retryLine.text) return;
+          return generateFromLine(view, retryLine, instruction);
+        };
+        notifyProblem({ ...problem, say: `${/^The model repeated/.test(error.message) ? error.message : problem.say} ${previousText === null ? 'Your request is unchanged; press Enter to retry.' : 'The previous suggestion is kept.'}` }, retry, 'Try again', 'write-error');
       }
     } finally {
       job.signal.removeEventListener('abort', clear);

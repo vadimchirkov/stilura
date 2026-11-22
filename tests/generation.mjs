@@ -365,4 +365,41 @@ assert.equal(commands.requests.length, 0, 'no generation was started');
   assert.equal(test.context.slashRequest(state).from, base.length);
   assert.equal(test.context.slashRequest(state).instruction, 'explain it');
 }
+
+// Try again callback on /write error retries when the request line is intact and skips if edited.
+{
+  const test = setup();
+  const retries = [];
+  test.context.notifyProblem = (problem, action) => { test.notices.push(problem.say); retries.push(action); };
+  const okFetch = test.context.fetch;
+  test.context.fetch = async (url, options) => {
+    test.requests.push({ url, body: JSON.parse(options.body), signal: options.signal });
+    return { ok: false, status: 502, json: async () => ({ error: 'HTTP 502' }) };
+  };
+  await test.run();
+  assert.equal(typeof retries[0], 'function', '/write failure must provide a retry callback');
+  assert.equal(test.view.state.field(test.field), null);
+
+  test.context.fetch = okFetch;
+  await retries[0]();
+  assert.equal(test.requests.length, 2);
+  assert.equal(test.view.state.field(test.field).phase, 'review');
+  assert.equal(test.view.state.field(test.field).text, 'A quiet garden.');
+
+  // If the request line changed before clicking Try again, retry must not fire.
+  const testEdited = setup();
+  const editedRetries = [];
+  testEdited.context.notifyProblem = (problem, action) => { testEdited.notices.push(problem.say); editedRetries.push(action); };
+  testEdited.context.fetch = async (url, options) => {
+    testEdited.requests.push({ url, body: JSON.parse(options.body), signal: options.signal });
+    return { ok: false, status: 502, json: async () => ({ error: 'HTTP 502' }) };
+  };
+  await testEdited.run();
+  assert.equal(typeof editedRetries[0], 'function');
+  const slashPos = draft.indexOf('/Describe');
+  testEdited.view.dispatch({ changes: { from: slashPos + 1, to: slashPos + 9, insert: 'Changed' } });
+  await editedRetries[0]();
+  assert.equal(testEdited.requests.length, 1, 'retry must not fire after the request line changed');
+}
+
 console.log('Generation checks passed: inline slash requests, R regeneration, concurrent edits, review and Undo.');

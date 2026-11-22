@@ -189,6 +189,41 @@ assert.equal(noModel.jobs.size, 0);
   }
 }
 
+// Try again on requestPassage restores a closed passageField when the quote is intact, and skips if mutated.
+{
+  const retries = [];
+  const p = setup();
+  const okFetch = p.context.fetch;
+  p.context.notifyProblem = (problem, action) => { p.notices.push(problem.say); retries.push(action); };
+  p.configure('Make it simpler.');
+  p.context.fetch = async () => ({ ok: false, status: 502, text: async () => 'Bad Gateway' });
+  await p.ask();
+  assert.equal(typeof retries[0], 'function');
+
+  // Close the passage tooltip before clicking Try again.
+  p.context.closePassage(p.view);
+  assert.equal(p.view.state.field(p.field), null);
+  p.context.fetch = okFetch;
+  await retries[0]();
+  assert(p.view.state.field(p.field), 'Try again must restore passageField');
+  assert.equal(p.view.state.field(p.gen).text, 'peaceful');
+
+  // If the quoted text changed after closing passageField, Try again must not fire.
+  const pChanged = setup();
+  const changedRetries = [];
+  pChanged.context.notifyProblem = (problem, action) => { pChanged.notices.push(problem.say); changedRetries.push(action); };
+  pChanged.configure('Make it simpler.');
+  pChanged.context.fetch = async () => ({ ok: false, status: 502, text: async () => 'Bad Gateway' });
+  await pChanged.ask();
+  pChanged.context.closePassage(pChanged.view);
+  const qFrom = draft.indexOf('quiet');
+  pChanged.view.dispatch({ changes: { from: qFrom, to: qFrom + 5, insert: 'noisy' } });
+  const beforeCalls = pChanged.requests.length;
+  await changedRetries[0]();
+  assert.equal(pChanged.view.state.field(pChanged.field), null, 'must not reopen passageField when quote changed');
+  assert.equal(pChanged.requests.length, beforeCalls, 'must not retry when quote changed');
+}
+
 console.log('Passage checks passed: local questions, synonyms, mapped replacements, regeneration, stale guards and Undo.');
 
 const modelScope = vm.createContext({ currentAgent: () => ({ provider: 'shared', model: 'one' }) });

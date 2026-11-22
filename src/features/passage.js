@@ -131,6 +131,7 @@ export function createPassage({
     if (!target || paused() || view.state.readOnly || target.key !== docState.documentKey) return;
     if (!target.instruction.trim()) return;
     if ([...jobs].some(job => !job.background)) { notify('Wait for the current request or stop it first.'); return; }
+    let snapshot = { from: target.from, to: target.to, quote: target.quote, key: target.key, instruction: target.instruction };
     const job = startJob(); passageJob = job;
     view.dispatch({ effects: setPassageFx.of({ ...target, busy: true, job, answer: '' }) });
     view.focus();
@@ -139,6 +140,7 @@ export function createPassage({
     try {
       if (!await ensureAgent() || !current()) return;
       target = view.state.field(passageField);
+      snapshot = { from: target.from, to: target.to, quote: target.quote, key: target.key, instruction: target.instruction };
       const instruction = rewriteInstruction(target.instruction, previous);
       const response = await fetch('/ask', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: job.signal,
@@ -187,7 +189,16 @@ export function createPassage({
         if (previous && view.state.field(generationField)) {
           view.dispatch({ effects: setPassageFx.of({ ...view.state.field(passageField), answer: 'Could not regenerate — the previous suggestion is kept.' }) });
         }
-        notifyProblem(modelError(error), () => requestPassage(view, previous), 'Try again', 'passage-error');
+        const retry = () => {
+          if (docState.documentKey !== snapshot.key || paused() || view.state.readOnly) return;
+          if (!view.state.field(passageField)) {
+            if (snapshot.from < 0 || snapshot.to > view.state.doc.length
+              || view.state.doc.sliceString(snapshot.from, snapshot.to) !== snapshot.quote) return;
+            view.dispatch({ effects: setPassageFx.of({ ...snapshot, answer: '', busy: false }) });
+          }
+          return requestPassage(view, previous);
+        };
+        notifyProblem(modelError(error), retry, 'Try again', 'passage-error');
       }
     } finally {
       const live = view.state.field(passageField);
