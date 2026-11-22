@@ -34,7 +34,7 @@ Needs Node 20+. Opens [http://127.0.0.1:3000](http://127.0.0.1:3000) in your wri
 
 ## Configuration
 
-Use **Settings** to choose a provider, model, reasoning level, and theme. Stilura supports ChatGPT Plus/Pro sign-in, API keys, credentials stored by Pi, and **Claude Code** (Pro/Max via `npm i -g @agentclientprotocol/claude-agent-acp` and `claude auth login`).
+Use **Settings** to choose a provider, model, reasoning level, and theme. Stilura supports ChatGPT Plus/Pro sign-in, API keys, credentials stored by Pi, and **Claude Code** (Pro/Max via `npm i -g @agentclientprotocol/claude-agent-acp` and `claude auth login`) and **Antigravity** (the `agy` CLI, signed in with `agy acp --login`).
 
 ```bash
 DRAFT_FILE=./article.md STYLE_FILE=./style.md npx stilura

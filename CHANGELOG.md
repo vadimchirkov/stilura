@@ -2,6 +2,16 @@
 
 Stilura (renamed from Litura) follows [semantic versioning](https://semver.org). Until 1.0 the minor number carries breaking changes.
 
+## 0.7.5 — 2026-11-22
+
+- Added Antigravity (`agy`) as a provider in Model settings, next to Claude Code. Typing suggestions stay off for both; press Cmd/Ctrl+Enter to ask for one, and Settings says why.
+- Claude Code now connects from the desktop app and from `npx stilura` even with the short PATH a macOS app gets, and shows the adapter's error instead of hiding it.
+- Drafts: an idle file reopens fresh instead of from a stale copy, `.stilura-history/` is pruned, stale per-tab copies are cleared, and the draft folder is created if missing.
+- Rewrite and generation: Try again works for `/write` and passage rewrites, `/write` keeps the line's indent, a path or slash inside a line no longer starts a command, a typo inside a typed command keeps it armed, and Cmd/Ctrl+K stays inside the editor and keeps the selection on Escape. The extension gets Cmd/Ctrl+K in plain fields and says when a draft change stops a generation.
+- Short continuations cut off by the length limit retry once with a larger budget. The provider's error reason reaches the notice, and an unavailable saved model shows in Settings instead of the first-run welcome.
+- Faster and lighter: no double document copy per keystroke, deduplicated agent status requests, gzip for large responses, and a cache for the Claude Code status.
+- Internal: `index.js` and `src/app.js` are split into smaller modules, and `npm test` now runs the whole suite.
+
 ## 0.7.4 — 2026-11-15
 
 - Updated `tauri-build` and Tauri dependencies for Rust 1.100 compatibility so Linux and Windows desktop bundles pass smoke checks.
