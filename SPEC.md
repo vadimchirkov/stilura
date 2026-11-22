@@ -9,12 +9,11 @@ The editor does not run style checks, score prose or expose a review API.
 ### Product principles
 
 - The document stays central; assistant UI floats above it instead of replacing it.
-- Detection must name a concrete, checkable problem.
 - The model may suggest text but never edits the document autonomously.
 - Subtractive editing: the job is sharper prose, not more prose — buried points, broken promises, filler, and vague attribution go; the author's facts and voice stay.
 - Specific facts, unusual details, uncertainty, humor, and the author's voice should survive a rewrite.
 - Empty output is better than a low-quality suggestion.
-- Local analysis should avoid model calls when it can confidently do so.
+- Local checks (spelling, grammar) run offline; everything else is a model request the author asked for.
 
 ## 2. Interface
 
@@ -24,7 +23,7 @@ The working document stays central. Selecting text offers a floating `Change` ac
 
 Settings contain model and access configuration, appearance and update checks. General explains writing shortcuts; continuations are always enabled and have no toggle. Stored `wa-autosuggest`, `wa-autoreview` and `wa-pills` preferences are ignored.
 
-Conversation island, file sidebar controls and notes UI are temporarily hidden. Their stored document state remains available. The editor does not display style scores, findings, a review button or `/slop`, and F8 has no review action.
+The conversation island and notes UI are temporarily hidden; the file sidebar and Cmd/Ctrl+O open, rename and trash drafts. Their stored document state remains available. The editor does not display style scores, findings, a review button or `/slop`, and F8 has no review action.
 
 ## 3. Writing workflows
 
@@ -35,6 +34,8 @@ Conversation island, file sidebar controls and notes UI are temporarily hidden. 
 Loading uses the shared text skeleton. Existing highlights and Markdown marks do not show through it. Suggestion previews and regeneration retain the same tracked range; the original draft stays unsaved until acceptance.
 
 ### 3.5 Draft chat
+
+Paused: the composer is hidden and `POST /chat` answers `410`. The behavior below is what the stored state and code still support.
 
 When no passage is attached, composer messages open a conversation about the whole draft. The server includes the current document in the system context and retains the last 20 valid user/assistant messages supplied by the client.
 
@@ -78,9 +79,7 @@ The settings dialog:
 - lists authenticated providers and their available models;
 - exposes only thinking levels supported by the selected model;
 - uses the same selected provider and model for every writing action; continuations use the least reasoning that model allows;
-- offers ChatGPT Plus/Pro sign-in (Codex OAuth) next to API keys.
-  Claude subscriptions are deliberately not offered — Anthropic restricts
-  them to Claude Code and claude.ai;
+- offers ChatGPT Plus/Pro sign-in (Codex OAuth) next to API keys, and Claude Code for Pro and Max subscribers. Claude Code runs through the local `claude-agent-acp` adapter and the writer's own `claude` install (`STILURA_CLAUDE_ACP` and `STILURA_CLAUDE_CODE` override their paths); Stilura never handles the subscription credentials;
 - saves the active provider/model/thinking selection to local storage;
 - adds and removes Pi API-key credentials;
 - does not offer removal for credentials supplied by environment variables;
@@ -106,7 +105,7 @@ The writer's own remarks on the draft. Three scopes: a passage anchors by quote 
 
 Four questions about audience and goal — reader, goal, awareness, scope — from the positioning-brief skill. Typing `/brief` in the composer (or picking it from the command menu) starts the interview: one question at a time in the chat stream, each with three options to pick or a free-typed answer. `Escape` pauses it; partial answers are kept and `/brief` resumes. A finished brief shows a summary card with per-row `Edit`; typing `/brief` with a finished brief reopens the summary.
 
-A nudge, at most once per document as a passing notice: a full review that returns a `level-1-whole-essay` or `level-2-introduction` finding (a weak opening is the symptom of a missing brief). It offers `Answer 4 questions` and never blocks the requested action. Creating, editing, and pausing the interview spends no model call.
+Creating, editing, and pausing the interview spends no model call. Nothing nudges the writer toward it.
 
 Answers travel with chat, rewrite, and idea requests as `POSITIONING BRIEF` context. Continuations receive the writing brief separately from optional context.
 
@@ -124,7 +123,7 @@ In the desktop app these keys also persist as atomic files in the application da
 | Chat history | `wa-chat`, last 20 turns | Until document replacement or browser storage is cleared |
 | Margin notes | `wa-notes`, each with paragraph anchor and quote snapshot | Until note deletion or document replacement |
 | Positioning brief | `wa-brief`, four answers plus a nudged flag | Until document replacement or browser storage is cleared |
-| Disk history | `<draft>.stilura-history`; latest 20 returned to the UI | No automatic deletion |
+| Disk history | `<draft>.stilura-history`; latest 50 kept, latest 20 returned to the UI | Older snapshots are deleted |
 | Browser checkpoints | `snapshots`, last 10; other tabs' working copies also appear in History | Checkpoints rotate; working copies remain until browser storage is cleared |
 | Update-check setting | `localStorage["wa-updatecheck"]`, on unless set to `off` | Until browser storage is cleared |
 | Last seen published version | `localStorage["wa-update"]` as `{ latest, at }`, reused for 24 hours | Until browser storage is cleared |
@@ -141,7 +140,7 @@ If browser and disk differ at startup, or the disk revision changes when the win
 
 Save errors remain visible and pause autosave until the writer retries. A failed request does not advance the recorded disk revision. The browser warns before leaving while a save is in flight or the working text differs from the last confirmed disk copy.
 
-Findings are restored only when their stored document text exactly matches the loaded draft, then their quotes are re-anchored. Chat restores messages, not finding cards or rewrite previews. Replacing the document clears findings, dismissed findings, chat, notes, and the brief, and keeps a browser checkpoint of the previous text. Keeping an AI replacement also creates a checkpoint. Rewrite previews alone change neither stored copy.
+Chat restores messages, not rewrite previews. Replacing the document clears chat, notes, and the brief, and keeps a browser checkpoint of the previous text. Keeping an AI replacement also creates a checkpoint. Rewrite previews alone change neither stored copy.
 
 `Cmd/Ctrl+S` requests an immediate disk save, respecting any paused conflict or error. `Export a copy` downloads the current text using the workspace draft's filename. `Open a file…` and drag-and-drop accept `.md`, `.markdown` and `.txt` files up to 1 MiB and replace the active document's contents without switching files. Opening a sidebar file switches the active document instead and opens hard-wrapped prose flowing: lone newlines inside a paragraph are Markdown soft breaks, so wrapped lines are joined back into paragraphs while blank-line breaks, lists, headings, quotes, fences and tables keep theirs. `New`, import and restore never ask first: the replaced text goes to History, and the notice offers `Undo` for a few seconds.
 
@@ -156,7 +155,7 @@ Every model-backed action sends the current full document to the selected provid
 - **Frontend:** vanilla JavaScript and CodeMirror 6.
 - **Bundling:** esbuild produces an IIFE bundle.
 - **Model runtime:** `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent`.
-- **Streaming:** Server-Sent Events for `/write`, `/idea` and `/chat`. For `/write`, `text` appends to the preview, `replace` replaces its entire buffer, and only `[DONE]` completes the candidate.
+- **Streaming:** Server-Sent Events for `/write`, `/idea` and `/chat` (paused). For `/write`, `text` appends to the preview, `replace` replaces its entire buffer, and only `[DONE]` completes the candidate.
 - **Non-streaming:** JSON for status, credentials, rewrite, and suggestions.
 - **Desktop shell:** Tauri 2, a window and a menu around the same server.
 
@@ -184,32 +183,35 @@ The folder choice is one line of text in the app's config directory (`folder.txt
 
 ```text
 stilura/
-|- README.md            product overview and setup
-|- SPEC.md              product and technical behavior
+|- README.md, SPEC.md, CHANGELOG.md
 |- index.js             build step, HTTP server, routes, and prompts
 |- pi.js                Pi discovery, credentials, model resolution, requests
-|- review.js            selection, sentence and continuation helpers
-|- markdown.js          safe minimal Markdown renderer for chat
-|- selfcheck.js         assertion-based checks
+|- claude-code.js       Claude Code through the local ACP adapter
+|- document-store.js    draft, history and notes files, locks
+|- live-session.js      shared document session, revisions, SSE
+|- session-client.js    HTTP client for the live session
+|- notes.js, work.js, tasks.js   margin notes and the agent work queue
+|- workspace-files.js   sidebar files: list, open, rename, trash
+|- suggestions.js       continuation prompt and validation
+|- editing.js, chat-edits.js, text-change.js   verified replacements and edit envelopes
+|- brief.js             positioning brief steps and validation
+|- review.js            text helpers shared by generation and spelling
+|- spellcheck.js        Harper checks for the browser worker
+|- markdown.js          safe minimal Markdown renderer
+|- storage-migration.js copies old Litura storage entries
+|- desktop.js           desktop bridge for the sidecar
+|- mcp.js               stdio MCP server
+|- selfcheck.js, safetycheck.js   assertion-based checks
 |- style.md             writing constraints injected into model prompts
 |- plugin.json          webview plugin manifest (/write, port 3000)
-|- scripts/
-|  |- build-server.mjs  bundles index.js into dist/server.mjs for the desktop build
-|  |- fetch-node.mjs    downloads and checksums the Node runtime the desktop build ships
-|  `- smoke-desktop.mjs starts a built bundle and checks it serves and stops
-|- src-tauri/
-|  |- src/main.rs       desktop shell: folder, sidecar, window, menu, updater
-|  |- tauri.conf.json   bundle targets, resources, updater endpoint and public key
-|  |- shell/index.html  holding page shown until the server is listening
-|  |- icons/            generated app icon set
-|  `- binaries/         fetched Node runtime, gitignored
-|- src/
-|  `- app.js            frontend source
-`- public/
-   |- index.html        application shell
-   |- style.css         application styles
-   |- app.js            generated bundle
-   `- fonts/            local iA Writer Duo files
+|- extension/           browser extension (shares editor-ui.js and writing-rules.js)
+|- artifact/            scripted demo page for the README animation
+|- skills/stilura/      agent skill
+|- scripts/             desktop build, smoke test, demo renderer, suggestion eval
+|- tests/               check and browser tests
+|- src-tauri/           desktop shell (main.rs, tauri.conf.json, shell/, icons/)
+|- src/                 frontend source (app.js, editor/, features/)
+`- public/              index.html, style.css, icons, fonts, generated app.js
 ```
 
 ## 6. HTTP API
@@ -227,8 +229,12 @@ All bodies and non-streaming responses are JSON unless noted.
 | `POST` | `/draft/open` | Switch the active document to workspace file `{ name }` (basename, Markdown or text); further `/draft` reads and writes target it. Returns the same shape as `GET /draft` |
 | `GET` | `/draft/history` | `{ snapshots }`, latest 20 disk backups with `text`, `at` and `revision` |
 | `GET` | `/files` | `{ files }`: Markdown and text files next to the draft, each with `name`, `size`, `mtime` and a markup-stripped `excerpt` (first meaningful prose, ~160 chars) for the card preview, sorted by name |
+| `POST` | `/brief`, `/passage-hint` | Positioning brief questions from the draft; a short hint for a selected passage |
 | `GET` | `/file?name=` | `{ name, text }` for one workspace file by basename; `400` for anything that is not a plain Markdown or text name, `404` when it is gone, `413` past 1 MB |
+| `PUT` `DELETE` | `/file` | Save or trash one workspace file by name |
+| `POST` | `/file/rename`, `/file/restore` | Rename a workspace file; bring a trashed one back |
 | `GET` | `/api/version` | `{ name, current }`; with `?check=1` also `latest` from the npm registry, or `error` if it is unreachable |
+| `GET` `POST` | `/api/agent/oauth/status`, `/start`, `/code`, `/cancel` | ChatGPT sign-in (device code or pasted address) |
 | `GET` | `/api/agent/status` | Providers, models, auth status, and default selection |
 | `POST` | `/api/agent/credentials` | Save a provider API key through Pi |
 | `DELETE` | `/api/agent/credentials` | Remove a stored provider credential |
@@ -304,6 +310,8 @@ Saved document formats use `stilura:` browser keys, `.stilura-history`, `.stilur
 | `STILURA_OFFLINE_MODELS` | Set to stop Stilura refreshing provider model lists | unset |
 | `STILURA_SIDECAR` | Set by the desktop shell: ready line, no browser, exit with stdin, updates handled by the shell | unset |
 | `STILURA_ROOT` | Directory holding `public/`, `package.json`, and `style.md` | the server's own directory |
+| `STILURA_STATE_DIR` | Desktop state directory the sidecar bridges to the page | unset |
+| `STILURA_CLAUDE_ACP`, `STILURA_CLAUDE_CODE` | Paths to the Claude Code ACP adapter and `claude` | found on `PATH` |
 | `STILURA_NODE_VERSION` | Node runtime the desktop build ships | `v24.21.0` |
 
 ## 9. Distribution and updates
@@ -354,7 +362,6 @@ Stilura currently supports one browser-local plain-text document. It does not in
 
 - a separate reference/context editor;
 - multiple documents side by side — the sidebar switches one active document within the folder, and import and export are a drop and a download;
-- document history or versioning beyond CodeMirror's current-session undo stack;
 - accounts, collaboration, or cloud sync;
 - a language-specific local score outside English/Latin-script heuristics.
 
