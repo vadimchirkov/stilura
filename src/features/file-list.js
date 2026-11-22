@@ -72,10 +72,10 @@ export function createFileList({ list, filter, files, currentName, open, rename,
     rename.type = 'button';
     rename.autofocus = true;
     rename.addEventListener('click', () => { panel.hidePopover(); startRename(file, item); });
-    const remove = el('button', 'file-action', 'Move to Trash');
-    remove.type = 'button';
-    remove.addEventListener('click', () => { panel.hidePopover(); remove(file.name); });
-    panel.append(rename, remove);
+    const trash = el('button', 'file-action', 'Move to Trash');
+    trash.type = 'button';
+    trash.addEventListener('click', () => { panel.hidePopover(); remove(file.name); });
+    panel.append(rename, trash);
     actions.append(toggle, panel);
     return actions;
   }

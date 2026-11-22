@@ -53,7 +53,7 @@ const env = Object.fromEntries(Object.entries(process.env)
   .filter(([name]) => !/API_KEY|TOKEN|SECRET|^AWS_|^GOOGLE_|^AZURE_|^PI_/.test(name)));
 
 const { server, url } = await startStilura({ directory, draft,
-  env: { ...env, STILURA_OFFLINE_MODELS: '1',
+  env: { ...env, STILURA_AGY: '/nonexistent', STILURA_OFFLINE_MODELS: '1',
     PI_CODING_AGENT_DIR: path.join(directory, 'pi'), STILURA_CLAUDE_CODE: claude, STILURA_CLAUDE_ACP: adapter } });
 
 const browser = await launchBrowser(puppeteer);

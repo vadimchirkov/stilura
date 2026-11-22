@@ -22,7 +22,7 @@ const until = async (check, message) => {
 const env = Object.fromEntries(Object.entries(process.env)
   .filter(([name]) => !/API_KEY|TOKEN|SECRET|^AWS_|^GOOGLE_|^AZURE_|^PI_/.test(name)));
 const { server, url } = await startStilura({ directory, draft,
-  env: { ...env, STILURA_CLAUDE_CODE: '/nonexistent', STILURA_CLAUDE_ACP: '/nonexistent', STILURA_OFFLINE_MODELS: '1',
+  env: { ...env, STILURA_CLAUDE_CODE: '/nonexistent', STILURA_CLAUDE_ACP: '/nonexistent', STILURA_AGY: '/nonexistent', STILURA_OFFLINE_MODELS: '1',
     PI_CODING_AGENT_DIR: path.join(directory, '.pi') } });
 const browser = await launchBrowser(puppeteer);
 const upload = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stilura-import-')), 'notes.md');
@@ -39,7 +39,17 @@ try {
   await page.evaluate(() => document.getElementById('settings-dialog').close());
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
   const opened = name => page.waitForFunction(name => document.querySelector('.file-card[aria-current="true"] .file-name')?.textContent === name, {}, name);
+  // A background refresh re-renders the list and replaces its rows; wait for
+  // it to go quiet so the row we act on stays attached.
+  const settled = () => page.evaluate(() => new Promise(resolve => {
+    let timer;
+    const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, 300); });
+    const done = () => { observer.disconnect(); resolve(); };
+    observer.observe(document.querySelector('.file-list'), { childList: true, subtree: true });
+    timer = setTimeout(done, 300);
+  }));
   const action = async (name, index) => {
+    await settled();
     const row = await page.evaluateHandle(name => [...document.querySelectorAll('.file-list > li')]
       .find(item => item.querySelector('.file-name')?.textContent === name), name);
     const date = await row.$('.file-meta');
