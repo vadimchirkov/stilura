@@ -376,7 +376,9 @@ function renderModelSettings() {
     draftSelection = model ? { provider: model.provider, model: model.model, thinkingLevel: fieldValue(thinkingEl) } : null;
   }
   modelHint.textContent = !choices.length ? 'No providers found. Check that Pi is installed.'
-    : provider && !connected && (provider.signin || provider.key) ? `Connect ${provider.name} to choose a model.` : '';
+    : provider && !connected && (provider.signin || provider.key) ? `Connect ${provider.name} to choose a model.`
+    : connected && [claudeProvider, antigravityProvider].includes(provider.id) ? 'Typing suggestions are off with this provider: each one starts a slow agent session. Press Cmd/Ctrl+Enter to ask for one.'
+    : '';
   renderConnection(provider);
   syncGuidedMode();
 }

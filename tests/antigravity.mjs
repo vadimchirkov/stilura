@@ -159,6 +159,7 @@ try {
   const appSource = fs.readFileSync(path.join(root, 'src', 'app.js'), 'utf8');
   assert(appSource.includes("const antigravityProvider = 'antigravity'"));
   assert(appSource.includes('backgroundAllowed: () => ![claudeProvider, antigravityProvider].includes(currentAgent()?.provider)'));
+  assert(appSource.includes('Typing suggestions are off with this provider'), 'Settings must say why subscription agents get no typing suggestions');
   const bgSource = fs.readFileSync(path.join(root, 'extension', 'background.js'), 'utf8');
   assert(bgSource.includes("['claude-code', 'antigravity'].includes(config.agent?.provider)"));
 
