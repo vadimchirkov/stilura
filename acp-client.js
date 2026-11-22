@@ -5,6 +5,8 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 
 const MAX_STDERR = 4096;
+// How long an agent-availability probe is trusted before asking the binary again.
+export const STATUS_CACHE_TTL = 60_000;
 
 function compareSemverDesc(a, b) {
   const pa = a.replace(/^v/i, '').split('.').map(n => Number.parseInt(n, 10) || 0);

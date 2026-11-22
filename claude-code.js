@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { executables, envWithPath, connectAcp } from './acp-client.js';
+import { executables, envWithPath, connectAcp, STATUS_CACHE_TTL } from './acp-client.js';
 
 export const CLAUDE_CODE = 'claude-code';
 export const claudeModels = [
@@ -10,7 +10,6 @@ export const claudeModels = [
   ['opus', 'Claude Opus'], ['haiku', 'Claude Haiku'],
 ].map(([model, name]) => ({ provider: CLAUDE_CODE, model, name, reasoning: false, thinkingLevels: ['off'] }));
 
-const STATUS_CACHE_TTL = 60_000;
 let cachedCommands = null;
 
 async function commands(signal, { force = false } = {}) {

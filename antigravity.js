@@ -1,10 +1,9 @@
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { executables, envWithPath, connectAcp } from './acp-client.js';
+import { executables, envWithPath, connectAcp, STATUS_CACHE_TTL } from './acp-client.js';
 
 export const ANTIGRAVITY = 'antigravity';
 
-const STATUS_CACHE_TTL = 60_000;
 const IDLE_TTL = 5 * 60_000;
 
 let pool = null;
@@ -72,12 +71,12 @@ export async function antigravityStatus({ force = false } = {}) {
   if (!force && cachedStatus && cachedStatus.envKey === key && Date.now() - cachedStatus.at < STATUS_CACHE_TTL) {
     return cachedStatus.value;
   }
-  const command = findBinary();
-  if (!command) {
-    const value = { installed: false, loggedIn: false, tier: null, models: [] };
+  const remember = value => {
     cachedStatus = { envKey: key, at: Date.now(), value };
     return value;
-  }
+  };
+  const command = findBinary();
+  if (!command) return remember({ installed: false, loggedIn: false, tier: null, models: [] });
   const signal = AbortSignal.timeout(15_000);
   let sessionId = null;
   let client = null;
@@ -93,13 +92,9 @@ export async function antigravityStatus({ force = false } = {}) {
       reasoning: false,
       thinkingLevels: ['off'],
     }));
-    const value = { installed: true, loggedIn: models.length > 0, tier, models };
-    cachedStatus = { envKey: key, at: Date.now(), value };
-    return value;
+    return remember({ installed: true, loggedIn: models.length > 0, tier, models });
   } catch {
-    const value = { installed: true, loggedIn: false, tier: null, models: [] };
-    cachedStatus = { envKey: key, at: Date.now(), value };
-    return value;
+    return remember({ installed: true, loggedIn: false, tier: null, models: [] });
   } finally {
     if (client && sessionId) {
       client.request('session/close', { sessionId }).catch(() => {});
