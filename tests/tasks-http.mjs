@@ -97,12 +97,15 @@ try {
   assert.equal((await fetch(endpoint + '/api/agent/status?unexpected=1', { headers: extensionHeaders })).status, 403);
   assert.equal((await fetch(endpoint + '/rewrite', { headers: extensionHeaders })).status, 405);
   assert.equal((await fetch(endpoint + '/api/agent/status', { headers: extensionHeaders })).status, 200);
-  const status = await new Promise((resolve, reject) => http.get(endpoint + '/api/agent/status', { headers: { ...extensionHeaders, 'Accept-Encoding': 'gzip' } }, res => {
+  const statusWith = encoding => new Promise((resolve, reject) => http.get(endpoint + '/api/agent/status', { headers: { ...extensionHeaders, 'Accept-Encoding': encoding } }, res => {
     const chunks = [];
     res.on('data', chunk => chunks.push(chunk));
     res.on('end', () => resolve({ headers: res.headers, body: Buffer.concat(chunks) }));
   }).on('error', reject));
+  const status = await statusWith('gzip');
   assert.equal(status.headers['content-encoding'], 'gzip');
+  for (const refused of ['gzip;q=0', 'br, gzip; q=0.0', 'identity']) assert.equal((await statusWith(refused)).headers['content-encoding'], undefined, refused);
+  assert.equal((await statusWith('br, gzip;q=0.5')).headers['content-encoding'], 'gzip');
   assert.equal(JSON.parse(gunzipSync(status.body)).models.some(item => item.provider === 'test' && item.model === 'model'), true);
   const extensionRewrite = await fetch(endpoint + '/rewrite', { method: 'POST', headers: extensionHeaders, body: JSON.stringify(rewriteInput) });
   assert.equal(extensionRewrite.status, 200);

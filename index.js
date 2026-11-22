@@ -236,7 +236,7 @@ function serveStatic(req, res, filePath) {
   const etag = `W/"${asset.size.toString(16)}-${Math.floor(asset.mtimeMs).toString(16)}"`;
   const headers = { 'Content-Type': mime, 'Cache-Control': cache, ETag: etag, Vary: 'Accept-Encoding' };
   if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return; }
-  if (asset.gzip && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
+  if (asset.gzip && acceptsGzip(req)) {
     res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', 'Content-Length': asset.gzip.length });
     res.end(asset.gzip);
     return;
@@ -245,10 +245,13 @@ function serveStatic(req, res, filePath) {
   res.end(asset.data);
 }
 
+// `gzip;q=0` means the client refuses it.
+const acceptsGzip = req => /(?:^|,)\s*gzip\s*(?:;\s*q=(?!0(?:\.0*)?\s*(?:,|$))|,|$)/i.test(req?.headers['accept-encoding'] || '');
+
 function sendJson(res, status, value) {
   const body = Buffer.from(JSON.stringify(value));
   const headers = { 'Content-Type': 'application/json; charset=utf-8', Vary: 'Accept-Encoding' };
-  if (body.length > 1024 && /\bgzip\b/.test(res.req?.headers['accept-encoding'] || '')) {
+  if (body.length > 1024 && acceptsGzip(res.req)) {
     const zipped = gzipSync(body);
     res.writeHead(status, { ...headers, 'Content-Encoding': 'gzip', 'Content-Length': zipped.length });
     res.end(zipped);
