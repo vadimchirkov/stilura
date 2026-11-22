@@ -187,8 +187,33 @@ export async function removeProviderApiKey(providerId) {
 // small endpoints; the login itself runs in the background.
 const OAUTH_PROVIDERS = ['openai-codex'];
 const OAUTH_METHODS = ['browser', 'device_code'];
+const OAUTH_TTL = 10 * 60_000;
 
 let oauthSession = null;
+
+function clearOAuthTimer(session) {
+  if (!session?.timer) return;
+  clearTimeout(session.timer);
+  session.timer = null;
+}
+
+function expireOAuth(session) {
+  if (!session || session.step === 'done' || session.step === 'error') return;
+  clearOAuthTimer(session);
+  session.timedOut = true;
+  session.step = 'error';
+  session.error = 'Sign-in timed out';
+  session.controller.abort();
+  session.resolveManual?.reject(new Error('Sign-in timed out'));
+  session.resolveManual = null;
+}
+
+function sweepExpiredOAuth() {
+  if (oauthSession && oauthSession.step !== 'done' && oauthSession.step !== 'error'
+    && Date.now() - oauthSession.startedAt >= oauthSession.ttl) {
+    expireOAuth(oauthSession);
+  }
+}
 
 const oauthSnapshot = session => !session ? null : {
   provider: session.provider,
@@ -203,6 +228,7 @@ const oauthSnapshot = session => !session ? null : {
 const oauthError = (status, message) => Object.assign(new Error(message), { status });
 
 export async function getOAuthStatus() {
+  sweepExpiredOAuth();
   const rt = await runtime();
   const supported = [];
   for (const id of OAUTH_PROVIDERS) {
@@ -224,18 +250,24 @@ export async function getOAuthStatus() {
   return { supported, active: oauthSnapshot(oauthSession) };
 }
 
-export async function startOAuth(providerId, method = 'browser') {
+export async function startOAuth(providerId, method = 'browser', { ttl = OAUTH_TTL } = {}) {
   if (!OAUTH_PROVIDERS.includes(providerId)) {
     throw oauthError(400, providerId === 'anthropic'
       ? 'Claude Pro/Max sign-in is not offered: Anthropic restricts subscription tokens to Claude Code and claude.ai.'
       : `Sign-in is not offered for provider ${providerId}`);
   }
   if (!OAUTH_METHODS.includes(method)) throw oauthError(400, `Unknown sign-in method ${method}`);
+  sweepExpiredOAuth();
   if (oauthSession && oauthSession.step !== 'done' && oauthSession.step !== 'error') {
     throw oauthError(409, 'A sign-in is already in progress');
   }
   const controller = new AbortController();
-  const session = oauthSession = { provider: providerId, method, step: 'starting', controller, resolveManual: null };
+  const session = oauthSession = {
+    provider: providerId, method, step: 'starting', controller, resolveManual: null,
+    startedAt: Date.now(), ttl, timedOut: false, timer: null,
+  };
+  session.timer = setTimeout(() => expireOAuth(session), ttl);
+  session.timer.unref?.();
   const interaction = {
     signal: controller.signal,
     prompt: async request => {
@@ -265,8 +297,11 @@ export async function startOAuth(providerId, method = 'browser') {
     } catch (error) {
       if (oauthSession !== session) return;
       session.step = 'error';
-      session.error = controller.signal.aborted ? 'Sign-in cancelled' : (error?.message || String(error));
+      session.error = session.timedOut ? 'Sign-in timed out'
+        : controller.signal.aborted ? 'Sign-in cancelled'
+        : (error?.message || String(error));
     } finally {
+      clearOAuthTimer(session);
       session.resolveManual = null;
     }
   })();
@@ -280,6 +315,7 @@ export async function startOAuth(providerId, method = 'browser') {
 }
 
 export async function submitOAuthCode(code) {
+  sweepExpiredOAuth();
   const text = String(code ?? '').trim();
   if (!text || text.length > 10_000) throw oauthError(400, 'Pasted code is empty or too long');
   const session = oauthSession;
@@ -290,8 +326,10 @@ export async function submitOAuthCode(code) {
 }
 
 export async function cancelOAuth() {
+  sweepExpiredOAuth();
   const session = oauthSession;
   if (!session || session.step === 'done' || session.step === 'error') return { active: oauthSnapshot(session) };
+  clearOAuthTimer(session);
   session.controller.abort();
   session.resolveManual?.reject(new Error('Sign-in cancelled'));
   session.resolveManual = null;
@@ -404,16 +442,24 @@ export async function streamText({ systemPrompt, userPrompt, messages, selection
     return;
   }
   const resolved = await resolveModel(selection);
+  const modelKey = `${resolved.model.provider}/${resolved.model.id}`;
+  const effectiveSelection = reasoningRequired.has(modelKey) && resolved.selection.thinkingLevel === 'off'
+    ? selectionFor(resolved.model, 'minimal')
+    : resolved.selection;
   const connection = mcp ? await connectMcp(signal) : null;
   const context = request(connection ? `${systemPrompt}\n\n${connection.instructions}` : systemPrompt, userPrompt, messages);
   if (connection) context.tools = connection.tools;
   for (let step = 0; step < 12; step++) {
     signal?.throwIfAborted();
-    const stream = resolved.rt.streamSimple(resolved.model, context, options(resolved.selection, maxTokens, signal));
+    const stream = resolved.rt.streamSimple(resolved.model, context, options(effectiveSelection, maxTokens, signal));
     let answer, wrote = false;
     for await (const event of stream) {
       if (event.type === 'text_delta') { wrote = true; onText(event.delta); }
       if (event.type === 'error') {
+        if (!wrote && step === 0 && !reasoningRequired.has(modelKey) && mandatoryReasoning(event.error)) {
+          reasoningRequired.add(modelKey);
+          return streamText({ systemPrompt, userPrompt, messages, selection: selectionFor(resolved.model, 'minimal'), maxTokens, signal, onText, mcp, onReset });
+        }
         // A refusal arrives before any text, so the next model can answer
         // the same request without the writer seeing the failure.
         const next = !wrote && step === 0 && notSupported(event.error.errorMessage)
