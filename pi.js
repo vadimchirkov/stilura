@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
-import { connectMcp } from './mcp.js';
+import { connectMcp, mcpConfigured } from './mcp.js';
 import { CLAUDE_CODE, askClaudeCode, claudeCodeStatus, claudeModels } from './claude-code.js';
 import { ANTIGRAVITY, askAntigravity, antigravityStatus } from './antigravity.js';
 
@@ -459,7 +459,11 @@ export async function completeText({ systemPrompt, userPrompt, selection, maxTok
   return text;
 }
 
-export async function streamText({ systemPrompt, userPrompt, messages, selection, maxTokens = 2000, signal, onText, mcp = false, onReset = () => {} }) {
+export async function streamText({ systemPrompt, userPrompt, messages, selection, maxTokens = 2000, signal, onText, mcp = false, onReset = () => {}, onNotice = () => {} }) {
+  // Agent sessions run their own tools; Stilura's MCP servers are not offered to them.
+  if (mcp && [CLAUDE_CODE, ANTIGRAVITY].includes(selection?.provider) && mcpConfigured()) {
+    onNotice(`Your MCP servers are not used with ${selection.provider === CLAUDE_CODE ? 'Claude Code' : 'Antigravity'}. Pick another model in Settings to use them.`);
+  }
   if (selection?.provider === CLAUDE_CODE) {
     await askClaudeCode({ systemPrompt, userPrompt, messages, model: selection.model, signal, onText });
     return;

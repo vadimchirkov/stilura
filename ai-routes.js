@@ -126,7 +126,7 @@ async function generate({ res, url, body, signal }) {
       'Connection':    'keep-alive',
     });
     let prompt = user;
-    let allowMcp = writing;
+    let allowMcp = writing, noticed = false;
     const fingerprint = text => (text.match(/[\p{L}\p{N}\p{M}_]+/gu) ?? [text.trim()]).join(' ').toLowerCase();
     for (let attempt = 0; attempt < (writing ? 2 : 1); attempt++) {
       signal.throwIfAborted();
@@ -134,6 +134,11 @@ async function generate({ res, url, body, signal }) {
       await streamText({
         systemPrompt: system, userPrompt: prompt, selection: body.agent, signal,
         mcp: allowMcp,
+        onNotice: notice => {
+          if (noticed) return;
+          noticed = true;
+          res.write(`data: ${JSON.stringify({ notice })}\n\n`);
+        },
         onReset: () => {
           usedTools = true;
           answer = ''; shown = '';

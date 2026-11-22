@@ -70,8 +70,17 @@ export async function closeMcpConnections() {
   await Promise.allSettled([...servers.values()].map(state => state.close()));
 }
 
-export async function connectMcp(signal, filename = process.env.STILURA_MCP_CONFIG
-  || path.join(os.homedir(), '.config', 'stilura', 'mcp.json')) {
+const defaultConfigFile = () => process.env.STILURA_MCP_CONFIG || path.join(os.homedir(), '.config', 'stilura', 'mcp.json');
+
+// Whether any MCP server is switched on, without connecting to it.
+export function mcpConfigured(filename = defaultConfigFile()) {
+  try {
+    const servers = JSON.parse(fs.readFileSync(filename, 'utf8')).mcpServers;
+    return !!servers && typeof servers === 'object' && !Array.isArray(servers) && Object.values(servers).some(entry => entry?.enabled !== false);
+  } catch { return false; }
+}
+
+export async function connectMcp(signal, filename = defaultConfigFile()) {
   let config;
   try { config = JSON.parse(fs.readFileSync(filename, 'utf8')).mcpServers; }
   catch (error) {

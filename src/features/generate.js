@@ -284,6 +284,7 @@ export function createGenerate({
       for await (const chunk of sseChunks(res)) {
         if (!current()) { job.abort(); return; }
         if (chunk.error) throw new Error(chunk.error);
+        if (chunk.notice) { notify(chunk.notice); continue; }
         answer = typeof chunk.replace === 'string' ? chunk.replace : answer + (chunk.text ?? '');
         view.dispatch({ effects: setGenerationFx.of({ ...view.state.field(generationField), text: cleanGenerated(answer), previousText: null }) });
       }

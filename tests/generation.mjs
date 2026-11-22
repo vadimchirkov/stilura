@@ -1,11 +1,12 @@
 import { createPassageInput } from '../extension/editor-ui.js';
 import * as writingRules from '../extension/writing-rules.js';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import vm from 'node:vm';
 import { EditorState, StateField, StateEffect, Transaction } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
 import { history, undo, isolateHistory } from '@codemirror/commands';
-import { appSection, appSource, generateIn } from './app-source.mjs';
+import { appSection, generateIn } from './app-source.mjs';
 
 const draft = 'Opening.\n\n/Describe a quiet garden.\n\nEnding.';
 function setup(beforeDone = async () => {}) {
@@ -420,5 +421,8 @@ assert.equal(commands.requests.length, 0, 'no generation was started');
 // The editor says so when it stops a generation because the draft changed.
 assert.match(appSection('EditorView.updateListener.of(update => {\n        if (passage.job()', 'if (update.selectionSet && !update.docChanged) for (const ui of chatEditCards'),
   /generate\.job\(\)\.signal\.aborted\) notify\('Generation stopped because the draft changed/);
+
+assert(fs.readFileSync(new URL('../src/features/generate.js', import.meta.url), 'utf8').includes('if (chunk.notice) { notify(chunk.notice); continue; }'),
+  'the editor shows a server notice from the /write stream');
 
 console.log('Generation checks passed: inline slash requests, R regeneration, concurrent edits, review and Undo.');

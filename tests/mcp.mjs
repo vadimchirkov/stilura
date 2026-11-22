@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { connectMcp, closeMcpConnections } from '../mcp.js';
+import { connectMcp, closeMcpConnections, mcpConfigured } from '../mcp.js';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stilura-mcp-'));
 const configFile = path.join(dir, 'mcp.json');
@@ -85,6 +85,21 @@ try {
   assert.deepEqual(calls.at(-1), { name: 'search', arguments: { query: 'writing preferences' } });
   assert.match(requests.at(-1).messages.find(message => message.role === 'tool').content, /prefers short sentences/);
   assert(requests.at(-1).messages.some(message => message.role === 'assistant' && message.tool_calls?.[0].id === 'call-search'));
+  // Agent providers cannot use the servers: say so first, once, only when MCP was asked for.
+  {
+    const notices = [], claude = { provider: 'claude-code', model: 'sonnet' };
+    process.env.STILURA_CLAUDE_CODE = path.join(dir, 'missing-claude');
+    for (const [mcp, selection] of [[true, claude], [false, claude], [true, { provider: 'antigravity', model: 'x' }]]) {
+      await streamText({ systemPrompt: 's', messages: [{ role: 'user', content: 'u' }], selection, mcp, onText() {}, onNotice: text => notices.push(text) }).catch(() => {});
+    }
+    assert.equal(notices.length, 2);
+    assert.match(notices[0], /MCP servers are not used with Claude Code/);
+    assert.match(notices[1], /Antigravity/);
+    assert.equal(mcpConfigured(path.join(dir, 'missing.json')), false);
+    assert.equal(mcpConfigured(configFile), true);
+    const off = path.join(dir, 'off.json');
+    fs.writeFileSync(off, '{"mcpServers":{"notes":{"enabled":false}}}'); assert.equal(mcpConfigured(off), false);
+  }
   assert.deepEqual(await invoke({ mcp: false }), { text: 'Plain answer.', resets: 0 });
   assert.equal(requests.at(-1).tools, undefined);
   mode = 'error';
