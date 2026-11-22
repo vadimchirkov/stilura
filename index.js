@@ -246,8 +246,16 @@ function serveStatic(req, res, filePath) {
 }
 
 function sendJson(res, status, value) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(value));
+  const body = Buffer.from(JSON.stringify(value));
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', Vary: 'Accept-Encoding' };
+  if (body.length > 1024 && /\bgzip\b/.test(res.req?.headers['accept-encoding'] || '')) {
+    const zipped = gzipSync(body);
+    res.writeHead(status, { ...headers, 'Content-Encoding': 'gzip', 'Content-Length': zipped.length });
+    res.end(zipped);
+    return;
+  }
+  res.writeHead(status, headers);
+  res.end(body);
 }
 
 // ─── Request body ──────────────────────────────────────────────────────────

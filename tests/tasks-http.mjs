@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createServer } from 'node:http';
+import http, { createServer } from 'node:http';
+import { gunzipSync } from 'node:zlib';
 import { patchRanges } from '../editing.js';
 
 assert.deepEqual(patchRanges('A B A', [{ old: 'A', new: 'B', all: true }, { old: 'B', new: 'C' }]), [
@@ -96,6 +97,13 @@ try {
   assert.equal((await fetch(endpoint + '/api/agent/status?unexpected=1', { headers: extensionHeaders })).status, 403);
   assert.equal((await fetch(endpoint + '/rewrite', { headers: extensionHeaders })).status, 405);
   assert.equal((await fetch(endpoint + '/api/agent/status', { headers: extensionHeaders })).status, 200);
+  const status = await new Promise((resolve, reject) => http.get(endpoint + '/api/agent/status', { headers: { ...extensionHeaders, 'Accept-Encoding': 'gzip' } }, res => {
+    const chunks = [];
+    res.on('data', chunk => chunks.push(chunk));
+    res.on('end', () => resolve({ headers: res.headers, body: Buffer.concat(chunks) }));
+  }).on('error', reject));
+  assert.equal(status.headers['content-encoding'], 'gzip');
+  assert.equal(JSON.parse(gunzipSync(status.body)).models.some(item => item.provider === 'test' && item.model === 'model'), true);
   const extensionRewrite = await fetch(endpoint + '/rewrite', { method: 'POST', headers: extensionHeaders, body: JSON.stringify(rewriteInput) });
   assert.equal(extensionRewrite.status, 200);
   assert.equal((await extensionRewrite.json()).variants.length, 3);

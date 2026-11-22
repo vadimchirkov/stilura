@@ -70,7 +70,17 @@ export function nextOfferedModel(provider, id) {
   return next ? { provider, id: next } : null;
 }
 
-export async function getAgentStatus({ force = false } = {}) {
+// Parallel callers (UI, extension popup, credential saves) share one build.
+const statusInflight = new Map();
+export function getAgentStatus({ force = false } = {}) {
+  if (!statusInflight.has(force)) {
+    const build = buildAgentStatus({ force }).finally(() => { if (statusInflight.get(force) === build) statusInflight.delete(force); });
+    statusInflight.set(force, build);
+  }
+  return statusInflight.get(force);
+}
+
+async function buildAgentStatus({ force }) {
   try {
     const [rt, claudeCode, antigravity] = await Promise.all([runtime(), claudeCodeStatus({ force }), antigravityStatus({ force })]);
     const available = (await rt.getAvailable()).filter(offered);
@@ -85,7 +95,6 @@ export async function getAgentStatus({ force = false } = {}) {
     const providers = [...new Set(models.map(model => model.provider))].map(id => ({
       id,
       name: rt.getProvider(id)?.name ?? id,
-      models: models.filter(model => model.provider === id),
     }));
     const authProviders = rt.getProviders()
       .filter(provider => provider.auth.apiKey?.login)
@@ -107,11 +116,11 @@ export async function getAgentStatus({ force = false } = {}) {
       ?? unique[0];
     if (claudeCode.plan) {
       models.push(...claudeModels);
-      providers.push({ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max', models: claudeModels });
+      providers.push({ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max' });
     }
     if (antigravity.loggedIn && antigravity.models.length) {
       models.push(...antigravity.models);
-      providers.push({ id: ANTIGRAVITY, name: 'Antigravity', models: antigravity.models });
+      providers.push({ id: ANTIGRAVITY, name: 'Antigravity' });
     }
     const defaultSelection = selected ? selectionFor(selected)
       : claudeCode.plan ? { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' }
@@ -141,8 +150,8 @@ export async function getAgentStatus({ force = false } = {}) {
       ...(antigravity.loggedIn ? antigravity.models : []),
     ];
     const providers = [
-      ...(claudeCode.plan ? [{ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max', models: claudeModels }] : []),
-      ...(antigravity.loggedIn && antigravity.models.length ? [{ id: ANTIGRAVITY, name: 'Antigravity', models: antigravity.models }] : []),
+      ...(claudeCode.plan ? [{ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max' }] : []),
+      ...(antigravity.loggedIn && antigravity.models.length ? [{ id: ANTIGRAVITY, name: 'Antigravity' }] : []),
     ];
     const defaultSelection = claudeCode.plan
       ? { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' }
@@ -165,12 +174,14 @@ export async function saveProviderApiKey(providerId, apiKey) {
   if (!provider?.auth.apiKey?.login) throw new Error(`Provider ${providerId} does not support API-key login`);
   if (!apiKey.trim() || apiKey.length > 10_000) throw new Error('API key is empty or too long');
   await rt.login(providerId, 'api_key', { prompt: async () => apiKey.trim(), notify: () => {} });
+  statusInflight.clear();
 }
 
 export async function removeProviderApiKey(providerId) {
   const rt = await runtime();
   if (!rt.getProvider(providerId)) throw new Error(`Unknown provider ${providerId}`);
   await rt.logout(providerId);
+  statusInflight.clear();
 }
 
 // ─── Subscription sign-in (OAuth) ──────────────────────────────────────────
