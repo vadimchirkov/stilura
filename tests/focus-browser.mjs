@@ -2,9 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { loadPuppeteer } from './browser-driver.mjs';
+import { launchBrowser, loadPuppeteer, startStilura } from './browser-driver.mjs';
 
 // Focus mode on a real page: Cmd/Ctrl+. fades every paragraph but the one
 // with the caret, the faded set follows the caret, the choice survives a
@@ -14,27 +12,10 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stilura-focus-'));
 const draft = path.join(directory, 'draft.md');
 fs.writeFileSync(draft, '- First item\n- Second item\n\nSecond paragraph.\n\nThird paragraph.\n');
 
-const server = spawn(process.execPath, [fileURLToPath(new URL('../index.js', import.meta.url))], {
-  cwd: directory,
-  env: { ...process.env, PORT: '0', STILURA_NO_OPEN: '1', DRAFT_FILE: draft },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-const url = await new Promise((resolve, reject) => {
-  let output = '';
-  const timer = setTimeout(() => reject(new Error(`Stilura did not start: ${output}`)), 30000);
-  server.stdout.on('data', chunk => {
-    output += chunk;
-    const match = output.match(/Stilura → (http:\/\/127\.0\.0\.1:\d+)/);
-    if (match) { clearTimeout(timer); resolve(match[1]); }
-  });
-  server.stderr.on('data', chunk => { output += chunk; });
-});
+const { server, url } = await startStilura({ directory, draft });
 server.stderr.on('data', chunk => process.stderr.write(chunk));
 
-const browser = await puppeteer.launch({
-  headless: true,
-  executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-});
+const browser = await launchBrowser(puppeteer);
 try {
   const page = await browser.newPage();
   const errors = [];

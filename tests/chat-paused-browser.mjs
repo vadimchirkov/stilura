@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 import { appSection } from './app-source.mjs';
+import { launchBrowser, loadPuppeteer } from './browser-driver.mjs';
 
-const require = createRequire(import.meta.url);
-const puppeteer = require(process.env.PUPPETEER_MODULE || 'puppeteer');
-const browser = await puppeteer.launch({ headless: true,
-  executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
+const puppeteer = loadPuppeteer();
+const browser = await launchBrowser(puppeteer);
 try {
   const page = await browser.newPage();
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');

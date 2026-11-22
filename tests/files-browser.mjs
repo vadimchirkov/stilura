@@ -2,9 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { loadPuppeteer } from './browser-driver.mjs';
+import { launchBrowser, loadPuppeteer, startStilura } from './browser-driver.mjs';
 
 // Files in the sidebar and the quick switcher, on a real page against a
 // disposable folder: New and import add files instead of replacing the open
@@ -23,26 +21,10 @@ const until = async (check, message) => {
 
 const env = Object.fromEntries(Object.entries(process.env)
   .filter(([name]) => !/API_KEY|TOKEN|SECRET|^AWS_|^GOOGLE_|^AZURE_|^PI_/.test(name)));
-const server = spawn(process.execPath, [fileURLToPath(new URL('../index.js', import.meta.url))], {
-  cwd: directory,
-  env: { ...env, PORT: '0', STILURA_NO_OPEN: '1', DRAFT_FILE: draft, STILURA_CLAUDE_CODE: '/nonexistent', STILURA_CLAUDE_ACP: '/nonexistent', STILURA_OFFLINE_MODELS: '1',
-    PI_CODING_AGENT_DIR: path.join(directory, '.pi') },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-const url = await new Promise((resolve, reject) => {
-  let output = '';
-  const timer = setTimeout(() => reject(new Error(`Stilura did not start: ${output}`)), 30000);
-  server.stdout.on('data', chunk => {
-    output += chunk;
-    const match = output.match(/Stilura → (http:\/\/127\.0\.0\.1:\d+)/);
-    if (match) { clearTimeout(timer); resolve(match[1]); }
-  });
-  server.stderr.on('data', chunk => { output += chunk; });
-});
-const browser = await puppeteer.launch({
-  headless: true,
-  executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-});
+const { server, url } = await startStilura({ directory, draft,
+  env: { ...env, STILURA_CLAUDE_CODE: '/nonexistent', STILURA_CLAUDE_ACP: '/nonexistent', STILURA_OFFLINE_MODELS: '1',
+    PI_CODING_AGENT_DIR: path.join(directory, '.pi') } });
+const browser = await launchBrowser(puppeteer);
 const upload = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stilura-import-')), 'notes.md');
 fs.writeFileSync(upload, 'Imported text.\n');
 
