@@ -224,6 +224,24 @@ assert.equal(noModel.jobs.size, 0);
   assert.equal(pChanged.requests.length, beforeCalls, 'must not retry when quote changed');
 }
 
+// Cancelling with restoreSelection restores the original selection; default close keeps the collapsed caret.
+{
+  const from = draft.indexOf('quiet'), to = from + 5;
+  const restored = setup();
+  assert.equal(restored.view.state.selection.main.anchor, to);
+  assert.equal(restored.view.state.selection.main.head, to);
+  restored.context.closePassage(restored.view, { restoreSelection: true });
+  assert.equal(restored.view.state.field(restored.field), null);
+  assert.equal(restored.view.state.selection.main.anchor, from);
+  assert.equal(restored.view.state.selection.main.head, to);
+
+  const plainClose = setup();
+  plainClose.context.closePassage(plainClose.view);
+  assert.equal(plainClose.view.state.field(plainClose.field), null);
+  assert.equal(plainClose.view.state.selection.main.anchor, to);
+  assert.equal(plainClose.view.state.selection.main.head, to);
+}
+
 console.log('Passage checks passed: local questions, synonyms, mapped replacements, regeneration, stale guards and Undo.');
 
 const modelScope = vm.createContext({ currentAgent: () => ({ provider: 'shared', model: 'one' }) });

@@ -2791,7 +2791,10 @@ chatClear.addEventListener('click', () => {
 
 // Cmd/Ctrl+K opens the same local field as Change.
 document.addEventListener('keydown', event => {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && !settingsDialog.open) {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    if (document.querySelector('dialog[open]')) return;
+    const active = document.activeElement;
+    if (active !== document.body && !workView.dom.contains(active)) return;
     event.preventDefault();
     openPassage(workView, workView.state.selection.main);
   }
@@ -2891,7 +2894,7 @@ const workView = new EditorView({
           run(view) {
             if (generate.job()) { generate.job().abort(); return true; }
             if (passage.job()) { passage.job().abort(); return true; }
-            if (view.state.field(passageField)) { closePassage(view); return true; }
+            if (view.state.field(passageField)) { closePassage(view, { restoreSelection: true }); return true; }
             const ghost = view.state.field(ghostField);
             const pending = suggestPending();
             if (!ghost && !pending) return false;

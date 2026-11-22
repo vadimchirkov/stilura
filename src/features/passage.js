@@ -61,11 +61,15 @@ export function createPassage({
     return true;
   }
 
-  function closePassage(view) {
+  function closePassage(view, { restoreSelection = false } = {}) {
     passageJob?.abort();
+    const value = view.state.field(passageField);
     const effects = [setPassageFx.of(null)];
     if (view.state.field(generationField)?.source === 'passage') effects.push(setGenerationFx.of(null));
-    view.dispatch({ effects });
+    const selection = restoreSelection && value && value.from >= 0 && value.to <= view.state.doc.length
+      ? { anchor: value.from, head: value.to }
+      : undefined;
+    view.dispatch({ effects, ...(selection ? { selection } : {}) });
   }
 
   function passageTooltip(view) {
@@ -83,7 +87,7 @@ export function createPassage({
         if (value && !value.busy) view.dispatch({ effects: setPassageFx.of({ ...value, instruction, answer: '' }) });
       },
       onClose: () => {
-        if (passageJob) passageJob.abort(); else closePassage(view);
+        if (passageJob) passageJob.abort(); else closePassage(view, { restoreSelection: true });
         view.focus();
       },
     });
