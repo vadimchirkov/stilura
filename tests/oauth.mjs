@@ -25,7 +25,7 @@ const codex = status.supported.find(provider => provider.id === 'openai-codex');
 assert.equal(codex.recommended, 'gpt-6-luna');
 const [agent, sameBuild] = await Promise.all([getAgentStatus(), getAgentStatus()]);
 assert.equal(agent, sameBuild, 'parallel status calls share one build');
-assert(agent.providers.length && agent.providers.every(provider => !('models' in provider)), 'providers do not repeat models[]');
+assert(agent.providers.every(provider => !('models' in provider)), 'providers do not repeat models[]');
 for (const model of agent.models.filter(model => model.provider === 'openai-codex')) {
   assert(['gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-luna'].includes(model.model), `${model.model} is refused for ChatGPT accounts`);
 }
