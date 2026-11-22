@@ -19,7 +19,7 @@ import { STYLE_FILE } from './tasks.js';
 import { documentStore, MAX_DOCUMENT_BYTES } from './document-store.js';
 import { fsErrorMessage, readBody, sendJson, serveStatic } from './http-util.js';
 import { documentSessions } from './live-session.js';
-import { renameDocument, trashDocument, restoreDocument } from './workspace-files.js';
+import { renameDocument, trashDocument, restoreDocument, resolveWorkspaceFile, listWorkspaceFiles } from './workspace-files.js';
 import { desktopBridge } from './desktop.js';
 import { aiRoutes } from './ai-routes.js';
 
@@ -132,19 +132,9 @@ catch (error) {
 // draft. Names are basenames with an approved extension, resolved inside that
 // folder — anything else is a 400, never a filesystem walk. Opening a file
 // identifies that tab's document without changing other tabs' save targets.
-const WORKSPACE_EXTENSIONS = new Set(['.md', '.markdown', '.txt']);
 const FILES_DIR = path.dirname(path.resolve(DRAFT_FILE));
 const HOME_DRAFT = path.resolve(DRAFT_FILE);
-function workspaceFile(name) {
-  if (typeof name !== 'string' || !name || name.includes('\0')) return null;
-  if (path.basename(name) !== name) return null;
-  if (!WORKSPACE_EXTENSIONS.has(path.extname(name).toLowerCase())) return null;
-  const resolved = path.join(FILES_DIR, name);
-  if (path.resolve(FILES_DIR, name) !== resolved) return null;
-  try { if (!fs.lstatSync(resolved).isFile()) return null; }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
-  return resolved;
-}
+const workspaceFile = name => resolveWorkspaceFile(FILES_DIR, name);
 
 async function requestedDraft(url) {
   const name = url.searchParams.get('name');
@@ -152,41 +142,6 @@ async function requestedDraft(url) {
   const file = workspaceFile(name);
   if (!file) throw Object.assign(new Error('Open a Markdown or text file by name.'), { status: 400 });
   return sessions.getVerified(file);
-}
-
-// Two-line card preview: the first ~160 chars of actual prose. Markup is
-// stripped line by line — headings, links, images, tags, comments and
-// frontmatter — so the card never shows `<img …>` or `#` artefacts.
-// Cut on a word boundary; a sliced half-word reads as a typo.
-function cardExcerpt(text) {
-  const lines = text.replace(/<!--[\s\S]*?-->/g, ' ').split('\n');
-  let inFrontmatter = false;
-  const kept = [];
-  let length = 0;
-  for (let i = 0; i < lines.length && length < 200; i++) {
-    const raw = lines[i].trim();
-    if (i === 0 && /^---$/.test(raw)) { inFrontmatter = true; continue; }
-    if (inFrontmatter) { if (/^(---|\.\.\.)$/.test(raw)) inFrontmatter = false; continue; }
-    const line = raw
-      .replace(/<[^>]*>/g, ' ')
-      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-      .replace(/(\*\*|__)(.*?)\1/g, '$2')
-      .replace(/(`{1,3})(.*?)\1/g, '$2')
-      .replace(/~~(.*?)~~/g, '$1')
-      .replace(/^#{1,6}\s+/, '')
-      .replace(/^>\s?/, '')
-      .replace(/^([-*+]\s+|\d+[.)]\s+)/, '')
-      .replace(/[*_~`|]+/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!line || /^[-*_]{3,}$/.test(line)) continue;
-    kept.push(line);
-    length += line.length + 1;
-  }
-  const joined = kept.join(' ');
-  if (joined.length <= 160) return joined;
-  return joined.slice(0, 160).replace(/\s+\S*$/, '').trim();
 }
 
 // ─── Style guide ───────────────────────────────────────────────────────────
@@ -375,34 +330,8 @@ async function draftRoutes(req, res, url) {
 
 async function fileRoutes(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/files') {
-    let entries;
-    try { entries = fs.readdirSync(FILES_DIR, { withFileTypes: true }); }
-    catch (error) { sendJson(res, 500, { error: fsErrorMessage(error) }); return true; }
-    const files = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || entry.name.startsWith('.')) continue;
-      if (!WORKSPACE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
-      try {
-        const full = path.join(FILES_DIR, entry.name);
-        const stats = fs.statSync(full);
-        // Card excerpt: first meaningful text, not raw markup. Comments,
-        // tags, images and markdown markers never reach the two-line preview.
-        // Read capped — a 1 MB draft must not be fully read for a preview.
-        let excerpt = '';
-        try {
-          const fd = fs.openSync(full, 'r');
-          try {
-            const buf = Buffer.alloc(2048);
-            const n = fs.readSync(fd, buf, 0, 2048, 0);
-            excerpt = cardExcerpt(buf.subarray(0, n).toString('utf8').replace(/\uFFFD+$/g, ''));
-          } finally { fs.closeSync(fd); }
-        } catch { excerpt = ''; }
-        files.push({ name: entry.name, size: stats.size, mtime: stats.mtime.toISOString(), excerpt, ...(full === HOME_DRAFT ? { home: true } : {}) });
-      } catch { /* raced deletion — skip */ }
-    }
-    files.sort((a, b) => a.name.localeCompare(b.name));
-    sendJson(res, 200, { files });
-    return true;
+    try { return reply(res, 200, { files: listWorkspaceFiles(FILES_DIR, HOME_DRAFT) }); }
+    catch (error) { return reply(res, 500, { error: fsErrorMessage(error) }); }
   }
   if (req.method === 'GET' && url.pathname === '/file') {
     const file = workspaceFile(url.searchParams.get('name'));
