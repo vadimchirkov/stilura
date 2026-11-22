@@ -201,17 +201,22 @@ const server = http.createServer((req, res) => {
   });
 });
 
-async function handleRequest(req, res) {
+const reply = (res, status, value) => { sendJson(res, status, value); return true; };
+
+// Host, origin and method checks. Answers the request itself and returns null
+// when it is refused, otherwise the parsed URL.
+function admit(req, res) {
   const host = req.headers.host;
   const port = server.address()?.port;
-  if (![ `127.0.0.1:${port}`, `localhost:${port}` ].includes(host)) return sendJson(res, 403, { error: 'Invalid local host' });
+  const deny = (status, value) => { sendJson(res, status, value); return null; };
+  if (![ `127.0.0.1:${port}`, `localhost:${port}` ].includes(host)) return deny(403, { error: 'Invalid local host' });
   const url = new URL(req.url, 'http://localhost');
   const extensionOrigin = /^chrome-extension:\/\/[a-p]{32}$/.test(req.headers.origin ?? '');
   const extensionCredential = req.headers['x-stilura-extension'];
   if (extensionOrigin || extensionCredential !== undefined) {
-    if (req.headers.origin && !extensionOrigin) return sendJson(res, 403, { error: 'Invalid extension origin' });
+    if (req.headers.origin && !extensionOrigin) return deny(403, { error: 'Invalid extension origin' });
     const method = extensionRoutes.get(url.pathname);
-    if (!method || url.search) return sendJson(res, 403, { error: 'This route is not available to extensions' });
+    if (!method || url.search) return deny(403, { error: 'This route is not available to extensions' });
     if (extensionOrigin) {
       res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
       res.setHeader('Vary', 'Origin');
@@ -219,39 +224,25 @@ async function handleRequest(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     if (req.method === 'OPTIONS' && extensionOrigin) {
       const headers = (req.headers['access-control-request-headers'] ?? '').toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
-      if (req.headers['access-control-request-method'] !== method || headers.some(value => !['content-type', 'x-stilura-extension'].includes(value))) return sendJson(res, 403, { error: 'Invalid extension preflight' });
+      if (req.headers['access-control-request-method'] !== method || headers.some(value => !['content-type', 'x-stilura-extension'].includes(value))) return deny(403, { error: 'Invalid extension preflight' });
       res.writeHead(204, { 'Access-Control-Allow-Methods': method, 'Access-Control-Allow-Headers': 'Content-Type, X-Stilura-Extension' });
-      return res.end();
+      res.end();
+      return null;
     }
     const credential = Buffer.from(extensionCredential ?? '');
-    if (credential.length !== extensionToken.length || !timingSafeEqual(credential, Buffer.from(extensionToken))) return sendJson(res, 403, { error: 'Reconnect Stilura from the extension settings.' });
-    if (req.method !== method) return sendJson(res, 405, { error: 'Method not allowed' });
+    if (credential.length !== extensionToken.length || !timingSafeEqual(credential, Buffer.from(extensionToken))) return deny(403, { error: 'Reconnect Stilura from the extension settings.' });
+    if (req.method !== method) return deny(405, { error: 'Method not allowed' });
   } else {
-    if (req.headers.origin && req.headers.origin !== `http://${host}`) return sendJson(res, 403, { error: 'Cross-origin requests are not allowed' });
-    if (req.headers['sec-fetch-site'] === 'cross-site') return sendJson(res, 403, { error: 'Cross-site requests are not allowed' });
+    if (req.headers.origin && req.headers.origin !== `http://${host}`) return deny(403, { error: 'Cross-origin requests are not allowed' });
+    if (req.headers['sec-fetch-site'] === 'cross-site') return deny(403, { error: 'Cross-site requests are not allowed' });
   }
-  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) return sendJson(res, 405, { error: 'Method not allowed' });
-  if (req.method !== 'GET' && req.headers['content-type']?.split(';')[0].trim() !== 'application/json') return sendJson(res, 415, { error: 'Use application/json' });
-  const cancellation = new AbortController();
-  res.on('close', () => { if (!res.writableEnded) cancellation.abort(); });
-  const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(120_000)]);
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  // Chat is paused, including requests from older cached clients.
-  if (url.pathname === '/chat') return sendJson(res, 410, { error: 'Chat is temporarily disabled.' });
-  if (req.method === 'GET' && url.pathname === '/extension') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; connect-src 'self'; frame-ancestors 'none'" });
-    return res.end('<!doctype html><html lang="en"><meta charset="utf-8"><title>Connect Stilura</title><h1>Connecting Stilura to Chrome</h1><p>This tab closes when the extension connects. Your documents stay in Stilura.</p></html>');
-  }
-  if (req.method === 'GET' && url.pathname === '/api/extension/connection') {
-    res.setHeader('Cache-Control', 'no-store');
-    return sendJson(res, 200, { token: extensionToken });
-  }
-  if (url.pathname.startsWith('/api/desktop/')) {
-    if (desktop) return desktop(req, res, url);
-    return sendJson(res, 404, { error: 'Not a desktop session' });
-  }
+  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) return deny(405, { error: 'Method not allowed' });
+  if (req.method !== 'GET' && req.headers['content-type']?.split(';')[0].trim() !== 'application/json') return deny(415, { error: 'Use application/json' });
+  return url;
+}
 
+// Version, agent status, credentials and subscription sign-in.
+async function agentRoutes(req, res, url) {
   // Which version is running, and — only when the browser asks with ?check=1,
   // which it does only if the writer turned the check on — which is published.
   // A registry that is down is reported, not retried: this is a nicety.
@@ -266,12 +257,12 @@ async function handleRequest(req, res) {
       catch (error) { payload.error = error.message; }
     }
     sendJson(res, 200, payload);
-    return;
+    return true;
   }
 
   if (req.method === 'GET' && url.pathname === '/api/agent/status') {
     sendJson(res, 200, await getAgentStatus({ force: url.searchParams.get('refresh') === '1' }));
-    return;
+    return true;
   }
 
   if ((req.method === 'POST' || req.method === 'DELETE') && url.pathname === '/api/agent/credentials') {
@@ -284,7 +275,7 @@ async function handleRequest(req, res) {
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
-    return;
+    return true;
   }
 
   // Subscription sign-in (OAuth) mirrors Pi's CLI login over HTTP: start
@@ -294,7 +285,7 @@ async function handleRequest(req, res) {
   if (req.method === 'GET' && url.pathname === '/api/agent/oauth/status') {
     try { sendJson(res, 200, await getOAuthStatus()); }
     catch (error) { sendJson(res, 500, { error: error.message }); }
-    return;
+    return true;
   }
   if (req.method === 'POST' && url.pathname === '/api/agent/oauth/start') {
     try {
@@ -303,7 +294,7 @@ async function handleRequest(req, res) {
     } catch (error) {
       sendJson(res, error.status || 400, { error: error.message });
     }
-    return;
+    return true;
   }
   if (req.method === 'POST' && url.pathname === '/api/agent/oauth/code') {
     try {
@@ -312,14 +303,17 @@ async function handleRequest(req, res) {
     } catch (error) {
       sendJson(res, error.status || 400, { error: error.message });
     }
-    return;
+    return true;
   }
   if (req.method === 'POST' && url.pathname === '/api/agent/oauth/cancel') {
     try { sendJson(res, 200, await cancelOAuth()); }
     catch (error) { sendJson(res, 500, { error: error.message }); }
-    return;
+    return true;
   }
+  return false;
+}
 
+async function draftRoutes(req, res, url) {
   // ── Draft file
   //
   //  One local Markdown file is the durable copy of the working document.
@@ -329,11 +323,11 @@ async function handleRequest(req, res) {
   if (url.pathname === '/draft/live') {
     try {
       const session = await requestedDraft(url);
-      if (req.headers['x-stilura-session'] && req.headers['x-stilura-session'] !== session.token) return sendJson(res, 403, { error: 'Document session changed' });
+      if (req.headers['x-stilura-session'] && req.headers['x-stilura-session'] !== session.token) return reply(res, 403, { error: 'Document session changed' });
       if (req.method === 'GET') {
-        if (!url.searchParams.has('since')) return sendJson(res, 200, session.read());
+        if (!url.searchParams.has('since')) return reply(res, 200, session.read());
         const since = Number(url.searchParams.get('since')), epoch = url.searchParams.get('epoch');
-        if (!url.searchParams.has('events')) return sendJson(res, 200, session.events(since, epoch));
+        if (!url.searchParams.has('events')) return reply(res, 200, session.events(since, epoch));
         let data;
         try { data = { type: 'updates', ...session.events(since, epoch) }; }
         catch (error) { if (!error.current) throw error; data = { type: 'reset', current: error.current }; }
@@ -343,26 +337,26 @@ async function handleRequest(req, res) {
         const unsubscribe = session.subscribe(emit);
         const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
         res.on('close', () => { clearInterval(heartbeat); unsubscribe(); });
-        return;
+        return true;
       }
       if (req.method === 'POST') {
         const body = await readBody(req);
-        if (body.action === 'push') return sendJson(res, 200, session.push(body));
-        if (body.action === 'patch') return sendJson(res, 200, session.patch(body.edits, body.revision));
-        if (body.action === 'write') return sendJson(res, 200, session.write(body.text, body.revision, { track: true }));
-        if (body.action === 'notes') return sendJson(res, 200, session.updateNotes(body));
-        if (body.action === 'work_next') return sendJson(res, 200, { job: session.claimWork(body.agent_id) });
-        if (body.action === 'work_finish') return sendJson(res, 200, session.finishWork(body));
-        if (body.action === 'work') return sendJson(res, 200, session.work(body));
-        if (body.action === 'note_suggest') return sendJson(res, 200, session.suggestNote(body));
-        return sendJson(res, 400, { error: 'Unknown session action' });
+        if (body.action === 'push') return reply(res, 200, session.push(body));
+        if (body.action === 'patch') return reply(res, 200, session.patch(body.edits, body.revision));
+        if (body.action === 'write') return reply(res, 200, session.write(body.text, body.revision, { track: true }));
+        if (body.action === 'notes') return reply(res, 200, session.updateNotes(body));
+        if (body.action === 'work_next') return reply(res, 200, { job: session.claimWork(body.agent_id) });
+        if (body.action === 'work_finish') return reply(res, 200, session.finishWork(body));
+        if (body.action === 'work') return reply(res, 200, session.work(body));
+        if (body.action === 'note_suggest') return reply(res, 200, session.suggestNote(body));
+        return reply(res, 400, { error: 'Unknown session action' });
       }
-    } catch (error) { return sendJson(res, error.status || 400, { error: error.message, current: error.current }); }
+    } catch (error) { return reply(res, error.status || 400, { error: error.message, current: error.current }); }
   }
   if (url.pathname === '/draft') {
     if (req.method === 'GET') {
       sendJson(res, 200, { ...(await requestedDraft(url)).read(), name: url.searchParams.get('name') ?? path.basename(DRAFT_FILE) });
-      return;
+      return true;
     }
     if (req.method === 'PUT') {
       try {
@@ -372,15 +366,18 @@ async function handleRequest(req, res) {
         console.error('[/draft]', error.message);
         sendJson(res, error.status || 500, { error: fsErrorMessage(error), current: error.current });
       }
-      return;
+      return true;
     }
   }
-  if (req.method === 'GET' && url.pathname === '/draft/history') return sendJson(res, 200, { snapshots: (await requestedDraft(url)).history() });
+  if (req.method === 'GET' && url.pathname === '/draft/history') return reply(res, 200, { snapshots: (await requestedDraft(url)).history() });
+  return false;
+}
 
+async function fileRoutes(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/files') {
     let entries;
     try { entries = fs.readdirSync(FILES_DIR, { withFileTypes: true }); }
-    catch (error) { sendJson(res, 500, { error: fsErrorMessage(error) }); return; }
+    catch (error) { sendJson(res, 500, { error: fsErrorMessage(error) }); return true; }
     const files = [];
     for (const entry of entries) {
       if (!entry.isFile() || entry.name.startsWith('.')) continue;
@@ -405,33 +402,33 @@ async function handleRequest(req, res) {
     }
     files.sort((a, b) => a.name.localeCompare(b.name));
     sendJson(res, 200, { files });
-    return;
+    return true;
   }
   if (req.method === 'GET' && url.pathname === '/file') {
     const file = workspaceFile(url.searchParams.get('name'));
-    if (!file) { sendJson(res, 400, { error: 'Open a Markdown or text file by name.' }); return; }
+    if (!file) { sendJson(res, 400, { error: 'Open a Markdown or text file by name.' }); return true; }
     let current;
     try { current = documentStore(file).read(); }
     catch (error) {
       const missing = error.code === 'ENOENT';
       sendJson(res, missing ? 404 : error.status || 500, { error: missing ? 'File no longer exists.' : fsErrorMessage(error) });
-      return;
+      return true;
     }
-    if (!current.exists) { sendJson(res, 404, { error: 'File no longer exists.' }); return; }
+    if (!current.exists) { sendJson(res, 404, { error: 'File no longer exists.' }); return true; }
     sendJson(res, 200, { ...current, name: path.basename(file) });
-    return;
+    return true;
   }
   // DELETE /file — move a workspace file, with its notes and history, into
   // the folder's .trash/. The home draft stays: it is where Stilura opens.
   if (req.method === 'DELETE' && url.pathname === '/file') {
     const file = workspaceFile(url.searchParams.get('name'));
-    if (!file) { sendJson(res, 400, { error: 'Delete a Markdown or text file by name.' }); return; }
-    if (file === HOME_DRAFT) { sendJson(res, 400, { error: 'The home draft cannot be deleted.' }); return; }
+    if (!file) { sendJson(res, 400, { error: 'Delete a Markdown or text file by name.' }); return true; }
+    if (file === HOME_DRAFT) { sendJson(res, 400, { error: 'The home draft cannot be deleted.' }); return true; }
     try {
       sessions.release(file);
       sendJson(res, 200, { deleted: true, name: path.basename(file), trashed: trashDocument(file) });
     } catch (error) { sendJson(res, error.status || 500, { error: error.status ? error.message : fsErrorMessage(error) }); }
-    return;
+    return true;
   }
   // POST /file/restore — put a trashed file back under its own name.
   if (req.method === 'POST' && url.pathname === '/file/restore') {
@@ -439,7 +436,7 @@ async function handleRequest(req, res) {
       const body = await readBody(req);
       sendJson(res, 200, { name: restoreDocument(FILES_DIR, String(body.trashed ?? '')) });
     } catch (error) { sendJson(res, error.status || 500, { error: error.status ? error.message : fsErrorMessage(error) }); }
-    return;
+    return true;
   }
   // POST /file/rename — rename a workspace file with its notes and history.
   // Never overwrites: an existing target is refused.
@@ -447,15 +444,15 @@ async function handleRequest(req, res) {
     try {
       const body = await readBody(req);
       const from = workspaceFile(String(body.name ?? '')), to = workspaceFile(String(body.to ?? ''));
-      if (!from || !to) { sendJson(res, 400, { error: 'Use a Markdown or text file name, without folders.' }); return; }
-      if (from === HOME_DRAFT) { sendJson(res, 400, { error: 'The home draft keeps its name.' }); return; }
-      if (from === to) { sendJson(res, 200, { name: path.basename(to), ...documentStore(to).read() }); return; }
+      if (!from || !to) { sendJson(res, 400, { error: 'Use a Markdown or text file name, without folders.' }); return true; }
+      if (from === HOME_DRAFT) { sendJson(res, 400, { error: 'The home draft keeps its name.' }); return true; }
+      if (from === to) { sendJson(res, 200, { name: path.basename(to), ...documentStore(to).read() }); return true; }
       sessions.release(from);
       renameDocument(from, to);
       const current = documentStore(to).read();
       sendJson(res, 200, { name: path.basename(to), id: current.id, previousId: documentStore(from).read().id });
     } catch (error) { sendJson(res, error.status || 500, { error: error.status ? error.message : fsErrorMessage(error) }); }
-    return;
+    return true;
   }
   // Without a revision this only creates a missing file (including Undo).
   // Replacing an existing file uses the same guard and history as /draft.
@@ -463,56 +460,80 @@ async function handleRequest(req, res) {
     try {
       const body = await readBody(req);
       const file = workspaceFile(String(body.name ?? ''));
-      if (!file) { sendJson(res, 400, { error: 'Write a Markdown or text file by name.' }); return; }
-      if (typeof body.text !== 'string') { sendJson(res, 400, { error: 'A text body is required.' }); return; }
-      if (Buffer.byteLength(body.text) > MAX_DOCUMENT_BYTES) { sendJson(res, 413, { error: 'File exceeds the 1 MB editing limit.' }); return; }
+      if (!file) { sendJson(res, 400, { error: 'Write a Markdown or text file by name.' }); return true; }
+      if (typeof body.text !== 'string') { sendJson(res, 400, { error: 'A text body is required.' }); return true; }
+      if (Buffer.byteLength(body.text) > MAX_DOCUMENT_BYTES) { sendJson(res, 413, { error: 'File exceeds the 1 MB editing limit.' }); return true; }
       const current = documentStore(file).write(body.text, body.revision ?? 'missing');
       sendJson(res, 200, { saved: true, name: path.basename(file), ...current });
     } catch (error) {
       sendJson(res, error.status || 500, { error: fsErrorMessage(error), current: error.current });
     }
-    return;
+    return true;
   }
   // Opening validates and reads a file; saves explicitly name it afterwards.
   if (req.method === 'POST' && url.pathname === '/draft/open') {
     try {
       const body = await readBody(req);
       const file = workspaceFile(String(body.name ?? ''));
-      if (!file) { sendJson(res, 400, { error: 'Open a Markdown or text file by name.' }); return; }
+      if (!file) { sendJson(res, 400, { error: 'Open a Markdown or text file by name.' }); return true; }
       let text;
       try { text = fs.readFileSync(file, 'utf8'); }
       catch (error) {
         const missing = error.code === 'ENOENT';
         sendJson(res, missing ? 404 : 500, { error: missing ? 'File no longer exists.' : fsErrorMessage(error) });
-        return;
+        return true;
       }
-      if (Buffer.byteLength(text) > MAX_DOCUMENT_BYTES) { sendJson(res, 413, { error: 'File exceeds the 1 MB editing limit.' }); return; }
+      if (Buffer.byteLength(text) > MAX_DOCUMENT_BYTES) { sendJson(res, 413, { error: 'File exceeds the 1 MB editing limit.' }); return true; }
       sendJson(res, 200, (await sessions.getVerified(file)).read());
     } catch (error) {
       sendJson(res, error.status || 500, { error: fsErrorMessage(error) });
     }
-    return;
+    return true;
+  }
+  return false;
+}
+
+// What the page may fetch from public/, by URL path.
+const PUBLIC_FILES = new Map([
+  ['/', 'index.html'], ['/style.css', 'style.css'], ['/app.js', 'app.js'], ['/harper.wasm', 'harper.wasm'],
+  ['/logo-tile.png', 'logo-tile.png'], ['/logo-mark.png', 'logo-mark.png'], ['/logo-mark-white.png', 'logo-mark-white.png'],
+  ['/icons/openai.svg', 'icons/openai.svg'], ['/icons/claude.svg', 'icons/claude.svg'],
+]);
+
+function serveAsset(req, res, url) {
+  const file = PUBLIC_FILES.get(url.pathname)
+    ?? (url.pathname.startsWith('/fonts/') ? path.join('fonts', path.basename(url.pathname)) : null);
+  if (file) serveStatic(req, res, path.join(PUBLIC, file));
+  else { res.writeHead(404); res.end('Not found'); }
+}
+
+async function handleRequest(req, res) {
+  const url = admit(req, res);
+  if (!url) return;
+  const cancellation = new AbortController();
+  res.on('close', () => { if (!res.writableEnded) cancellation.abort(); });
+  const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(120_000)]);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  // Chat is paused, including requests from older cached clients.
+  if (url.pathname === '/chat') return sendJson(res, 410, { error: 'Chat is temporarily disabled.' });
+  if (req.method === 'GET' && url.pathname === '/extension') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; connect-src 'self'; frame-ancestors 'none'" });
+    return res.end('<!doctype html><html lang="en"><meta charset="utf-8"><title>Connect Stilura</title><h1>Connecting Stilura to Chrome</h1><p>This tab closes when the extension connects. Your documents stay in Stilura.</p></html>');
+  }
+  if (req.method === 'GET' && url.pathname === '/api/extension/connection') {
+    res.setHeader('Cache-Control', 'no-store');
+    return sendJson(res, 200, { token: extensionToken });
+  }
+  if (url.pathname.startsWith('/api/desktop/')) {
+    if (desktop) return desktop(req, res, url);
+    return sendJson(res, 404, { error: 'Not a desktop session' });
   }
 
-  // ── Static
-  if (req.method === 'GET') {
-    if      (url.pathname === '/')          serveStatic(req, res, path.join(PUBLIC, 'index.html'));
-    else if (url.pathname === '/style.css') serveStatic(req, res, path.join(PUBLIC, 'style.css'));
-    else if (url.pathname === '/app.js')    serveStatic(req, res, path.join(PUBLIC, 'app.js'));
-    else if (url.pathname === '/logo-tile.png')       serveStatic(req, res, path.join(PUBLIC, 'logo-tile.png'));
-    else if (url.pathname === '/logo-mark.png')       serveStatic(req, res, path.join(PUBLIC, 'logo-mark.png'));
-    else if (url.pathname === '/logo-mark-white.png') serveStatic(req, res, path.join(PUBLIC, 'logo-mark-white.png'));
-    else if (['/icons/openai.svg', '/icons/claude.svg'].includes(url.pathname)) {
-      serveStatic(req, res, path.join(PUBLIC, 'icons', path.basename(url.pathname)));
-    }
-    else if (url.pathname.startsWith('/fonts/')) {
-      const fontFile = path.basename(url.pathname);
-      serveStatic(req, res, path.join(PUBLIC, 'fonts', fontFile));
-    }
-    else if (url.pathname === '/harper.wasm') serveStatic(req, res, path.join(PUBLIC, 'harper.wasm'));
-    else { res.writeHead(404); res.end('Not found'); }
-    return;
-  }
+  if (await agentRoutes(req, res, url)) return;
+  if (await draftRoutes(req, res, url)) return;
+  if (await fileRoutes(req, res, url)) return;
+  if (req.method === 'GET') return serveAsset(req, res, url);
 
   // ── API
   if (req.method === 'POST') {
