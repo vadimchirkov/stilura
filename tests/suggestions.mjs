@@ -63,6 +63,13 @@ for (const bad of ['Explanation\nTEXT: continued', '```text\nTEXT: continued\n``
   assert.equal(document.slice(0, 3) + text + document.slice(3), 'We finally met yesterday.');
 }
 
+// The document id reaches the model call, for a per-document cache session.
+{
+  const seen = [];
+  await requestSuggestion({ document: 'Draft', documentId: 'a.md' }, async request => { seen.push(request.documentId); return 'TEXT: more'; });
+  assert.deepEqual(seen, ['a.md']);
+}
+
 // Recover only a format failure, at most once, under the original deadline.
 {
   const requests = [], signal = new AbortController().signal;
@@ -315,5 +322,41 @@ for (const [text, cursor, eligible] of [
   assert(now.before.length < 10_100 && now.before.startsWith('…'));
   assert(later.before.startsWith(now.before), 'typing keeps the cacheable window start');
   assert.deepEqual(cursorWindow('short text', 5), { before: 'short', after: ' text' });
+}
+// atParagraphEnd edge cases and zero doc.toString() calls during suggestSchedule on long drafts.
+{
+  for (const [text, anchor, head, eligible] of [
+    ['First paragraph\n\nNext paragraph', 15, 15, true],
+    ['First paragraph\n   \nNext paragraph', 15, 15, true],
+    ['First paragraph\n', 15, 15, true],
+    ['First paragraph\n', 16, 16, true],
+    ['First line\nSecond line', 10, 10, false],
+    ['A long draft', 4, 4, false],
+    ['A long draft', 12, 12, true],
+    ['A long draft', 0, 12, false],
+    ['', 0, 0, true],
+  ]) {
+    const state = EditorState.create({ doc: text, selection: { anchor, head } });
+    assert.equal(atParagraphEnd(state), eligible, JSON.stringify({ text, anchor, head }));
+  }
+
+  // Whitespace-only or short drafts never schedule a background suggestion.
+  for (const text of ['   \n   \n   ', ' '.repeat(50), 'Short', ' '.repeat(20) + 'hi' + ' '.repeat(20)]) {
+    const h = harness(text);
+    h.context.suggestSchedule();
+    assert.equal(h.timers.size, 0, JSON.stringify(text.slice(0, 25)));
+  }
+
+  // Long draft (>100k): suggestSchedule must schedule without calling state.doc.toString().
+  const longText = 'word '.repeat(22_000).trimEnd();
+  assert(longText.length > 100_000);
+  const h = harness(longText);
+  let toStringCalls = 0;
+  const doc = h.view.state.doc;
+  const origToString = doc.toString.bind(doc);
+  doc.toString = () => { toStringCalls++; return origToString(); };
+  h.context.suggestSchedule();
+  assert.equal(h.timers.size, 1, 'long draft at paragraph end must schedule a suggestion');
+  assert.equal(toStringCalls, 0, 'suggestSchedule must not call state.doc.toString()');
 }
 console.log('Suggestion checks passed: spacing, scheduling, cancellation, stale results, brief context, acceptance, typeahead, rate-limit pause and context window.');

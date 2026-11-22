@@ -6,8 +6,12 @@ import { textChange, changesOverlap } from '../text-change.js';
 const signature = note => JSON.stringify([note.text, note.resolved === true, note.kind]);
 
 // A shadow collab state keeps transport separate from the editor's UI fields and undo.
-export function liveDocument({ view, url, request = fetch, subscribe = address => new EventSource(address), onSaved, onNotes, onError, onConflict, getNotes, readPendingNotes = () => [], writePendingNotes = () => {} }) {
-  let connection = null, applying = false, timer;
+export function liveDocument({ view, url, request = fetch, subscribe = address => new EventSource(address), onSaved, onNotes, onError, onConflict, getNotes, readPendingNotes = () => [], writePendingNotes = () => {}, reconnectMs = 1000 }) {
+  let connection = null, applying = false, timer, reconnectTimer = null;
+  function clearReconnect() {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   function schedule() {
     if (!timer) timer = setTimeout(() => { timer = null; flush().catch(onError); }, 75);
   }
@@ -118,6 +122,33 @@ export function liveDocument({ view, url, request = fetch, subscribe = address =
     })();
     return c.sending;
   }
+  function openStream(c) {
+    if (connection !== c) return;
+    clearReconnect();
+    c.stream?.close();
+    const stream = subscribe(`${c.url}&events=1&epoch=${encodeURIComponent(c.epoch)}&since=${getSyncedVersion(c.state)}`);
+    c.stream = stream;
+    stream.onmessage = event => {
+      if (connection !== c || c.stream !== stream) return;
+      try { receive(c, JSON.parse(event.data)); } catch (error) { onError(error); }
+    };
+    stream.onopen = () => {
+      if (connection !== c || c.stream !== stream) return;
+      schedule();
+    };
+    stream.onerror = () => {
+      if (connection !== c || c.stream !== stream) return;
+      onError(new Error('Connection interrupted. Your changes are kept locally; reconnecting.'));
+      stream.close();
+      if (c.stream === stream) c.stream = null;
+      clearReconnect();
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        openStream(c);
+      }, reconnectMs);
+      reconnectTimer.unref?.();
+    };
+  }
   function connect(current) {
     close();
     if (!current.epoch) return;
@@ -131,10 +162,7 @@ export function liveDocument({ view, url, request = fetch, subscribe = address =
     writePendingNotes([...c.dirtyNotes]);
     const local = view.state.doc.toString();
     if (local !== current.text) c.state = c.state.update({ changes: textChange(current.text, local) }).state;
-    c.stream = subscribe(`${c.url}&events=1&epoch=${encodeURIComponent(c.epoch)}&since=${getSyncedVersion(c.state)}`);
-    c.stream.onmessage = event => { try { receive(c, JSON.parse(event.data)); } catch (error) { onError(error); } };
-    c.stream.onopen = () => schedule();
-    c.stream.onerror = () => { if (connection === c) onError(new Error('Connection interrupted. Your changes are kept locally; reconnecting.')); };
+    openStream(c);
     if (c.notesReady) publishNotes(c);
     else notesChanged();
     schedule();
@@ -159,6 +187,7 @@ export function liveDocument({ view, url, request = fetch, subscribe = address =
   }
   function close() {
     clearTimeout(timer); timer = null;
+    clearReconnect();
     connection?.stream?.close(); connection = null;
   }
   return {

@@ -36,7 +36,9 @@ import { focusMode, setFocusMode } from './editor/focus.js';
 import { clearGhostFx, ghostField, ghostClear, ghostAccept } from './editor/ghost.js';
 import { spellMarkerField, createSpelling } from './editor/spelling.js';
 import { combobox, setOptions, fieldValue } from './combobox.js';
-import { chatEl } from './dom.js';
+import { el } from './dom.js';
+import { safeJson, unavailableSelection } from './format.js';
+import { limitSnapshots, pruneTabCopies, removeTabCopy, writeTabCopy } from './tab-copies.js';
 import { api } from './api.js';
 import { createDocumentState } from './document-state.js';
 import { createUpdateCheck } from './update.js';
@@ -44,7 +46,9 @@ import { createSuggest } from './features/suggest.js';
 import { setGenerationFx, generationField, slashRequest, requestField, waitingForSlash, createGenerate } from './features/generate.js';
 import { setPassageFx, createPassage } from './features/passage.js';
 import { createBubble } from './features/bubble.js';
-import { createSwitcher, newFileName } from './features/switcher.js';
+import { createSwitcher } from './features/switcher.js';
+import { createHistory } from './features/history.js';
+import { createFileList } from './features/file-list.js';
 import { createNotices, modelError } from './notices.js';
 import { createEditorTheme, textSelection } from './editor/theme.js';
 import { BRIEF_STEPS, validateBriefQuestions, validateBriefUpdate } from '../brief.js';
@@ -81,10 +85,14 @@ const connectRow    = document.getElementById('connect-row');
 const connectSignin = document.getElementById('connect-signin');
 const connectClaude = document.getElementById('connect-claude');
 const claudeProvider = 'claude-code';
+const connectAntigravity = document.getElementById('connect-antigravity');
+const antigravityProvider = 'antigravity';
+const subscriptionProviders = ['openai-codex', claudeProvider, antigravityProvider];
 const connectKey    = document.getElementById('connect-key');
 const connectionLine = document.getElementById('connection-line');
 const settingsError = document.getElementById('settings-error');
 const modelHint     = document.getElementById('model-hint');
+const modelUnavailable = document.getElementById('model-unavailable');
 const chatStream    = document.getElementById('chat-stream');
 const chatInput     = document.getElementById('chat-input');
 const chatSendButton = document.getElementById('chat-send');
@@ -167,18 +175,12 @@ try {
 } catch { tabId = crypto.randomUUID(); }
 const docStorage = {
   getItem(key) { try { return docState.documentKey ? (key === 'wa-working' ? localStorage.getItem(docState.documentKey + key + ':' + tabId) : null) ?? localStorage.getItem(docState.documentKey + key) : null; } catch { return null; } },
-  setItem(key, value) { try { if (docState.documentKey) { localStorage.setItem(docState.documentKey + key, value); if (key === 'wa-working') localStorage.setItem(docState.documentKey + key + ':' + tabId, value); } } catch { notify('Browser backup unavailable — keep this tab open until saved', { sticky: true, key: 'backup' }); } },
-  removeItem(key) { try { if (docState.documentKey) localStorage.removeItem(docState.documentKey + key); } catch {} },
+  setItem(key, value) { try { if (docState.documentKey) { localStorage.setItem(docState.documentKey + key, value); if (key === 'wa-working') writeTabCopy(localStorage, docState.documentKey, tabId, value); } } catch { notify('Browser backup unavailable — keep this tab open until saved', { sticky: true, key: 'backup' }); } },
+  removeItem(key) { try { if (docState.documentKey) { localStorage.removeItem(docState.documentKey + key); if (key === 'wa-working') removeTabCopy(localStorage, docState.documentKey, tabId); } } catch {} },
 };
 const jobs = new Set();
 // JSON in storage can be stale, truncated, or hand-edited. A corrupt value
 // must read as its fallback, never throw at the call site.
-function safeJson(value, fallback) {
-  try {
-    const parsed = JSON.parse(value ?? '');
-    return parsed ?? fallback;
-  } catch { return fallback; }
-}
 // Background work is the writer's text being checked while they type; it is
 // not something they pressed send for. Only what they started turns the send
 // button into a stop button.
@@ -260,6 +262,7 @@ function providerChoices() {
   for (const provider of oauthInfo.supported) add(provider.id, provider.label ?? provider.name, { signin: provider, name: provider.label ?? provider.name });
   for (const provider of agentInfo.providers) add(provider.id, provider.name);
   if (agentInfo.claudeCode) add(claudeProvider, 'Claude Code · Pro/Max');
+  if (agentInfo.antigravity) add(antigravityProvider, 'Antigravity');
   const choices = [...byId.values()].map(choice => ({ ...choice, connected: agentInfo.models.some(model => model.provider === choice.id) }));
   return choices.sort((a, b) => b.connected - a.connected || a.name.localeCompare(b.name));
 }
@@ -271,6 +274,7 @@ let modelSetup = '';
 let guidedStep = 1;
 const chatService = document.getElementById('service-chatgpt');
 const claudeService = document.getElementById('service-claude');
+const antigravityService = document.getElementById('service-antigravity');
 const apiService = document.getElementById('service-api');
 const apiModelSettings = document.getElementById('api-model-settings');
 const guidedStepsEl = document.getElementById('guided-steps');
@@ -304,17 +308,17 @@ function renderModelSettings() {
     ?? normalizeSelection(agentInfo.defaultSelection)
     ?? (agentInfo.models[0] ? normalizeSelection({ ...agentInfo.models[0], thinkingLevel: 'medium' }) : null);
   const choices = providerChoices();
-  const apiChoices = choices.filter(choice => !choice.signin && choice.id !== claudeProvider);
+  const apiChoices = choices.filter(choice => !choice.signin && choice.id !== claudeProvider && choice.id !== antigravityProvider);
   const apiOpen = modelSetup === 'api';
   const guided = settingsDialog.dataset.guided === 'true';
   const activeAgent = currentAgent();
   const id = modelSetup && !apiOpen ? modelSetup : activeAgent?.provider;
-  const showSubscriptionModel = !guided && ['openai-codex', claudeProvider].includes(id) && Boolean(modelFor(id));
+  const showSubscriptionModel = !guided && subscriptionProviders.includes(id) && Boolean(modelFor(id));
   document.getElementById('writing-model-heading').textContent = guided ? 'Connect your writing assistant' : 'Writing model';
   apiModelSettings.hidden = !apiOpen && !showSubscriptionModel;
   document.getElementById('provider-field').hidden = !apiOpen;
   apiService.setAttribute('aria-expanded', String(apiOpen));
-  for (const [tab, section] of [[chatService, 'openai-codex'], [claudeService, claudeProvider], [apiService, 'api']]) {
+  for (const [tab, section] of [[chatService, 'openai-codex'], [claudeService, claudeProvider], [antigravityService, antigravityProvider], [apiService, 'api']]) {
     if (guided) tab.removeAttribute('aria-pressed');
     else tab.setAttribute('aria-pressed', String(section === (apiOpen ? 'api' : id)));
   }
@@ -325,12 +329,20 @@ function renderModelSettings() {
   const provider = choices.find(choice => choice.id === (apiOpen ? fieldValue(providerEl) : id));
   const connected = !!provider?.connected;
   modelField.hidden = !(connected && (apiOpen || showSubscriptionModel));
-  thinkingField.hidden = modelField.hidden || provider?.id === claudeProvider;
-  for (const [card, id, label] of [[chatService, 'openai-codex', 'Plus or Pro'], [claudeService, claudeProvider, 'Claude Pro or Max']]) {
+  thinkingField.hidden = modelField.hidden || provider?.id === claudeProvider || provider?.id === antigravityProvider;
+  for (const [card, id, label] of [
+    [chatService, 'openai-codex', 'Plus or Pro'],
+    [claudeService, claudeProvider, 'Claude Pro or Max'],
+    [antigravityService, antigravityProvider, 'Google AI · agy'],
+  ]) {
     const model = modelFor(id);
     const active = currentAgent()?.provider === id;
     const plan = id === claudeProvider && agentInfo.claudeCode?.plan;
-    const modelName = plan ? `Claude ${plan === 'max' ? 'Max' : 'Pro'} · ${model?.name || model?.model}` : (model?.name || model?.model);
+    const tier = id === antigravityProvider && agentInfo.antigravity?.tier;
+    const modelLabel = model?.name || model?.model;
+    const modelName = plan ? `Claude ${plan === 'max' ? 'Max' : 'Pro'} · ${modelLabel}`
+      : tier ? `${tier} · ${modelLabel}`
+      : modelLabel;
     card.querySelector('small').textContent = model ? `${active ? '' : 'Connected · '}${modelName}` : label;
     card.classList.toggle('is-active', active);
     card.classList.toggle('is-connected', Boolean(model));
@@ -343,7 +355,7 @@ function renderModelSettings() {
   chatAction.hidden = apiOpen || id !== 'openai-codex' || !chat?.signin?.configured;
   if (!chatAction.hidden && !chatAction.firstChild) chatAction.append(signOutButton(chat));
   if (chatAction.hidden) chatAction.replaceChildren();
-  const activeIsApi = Boolean(activeAgent && !['openai-codex', claudeProvider].includes(activeAgent.provider));
+  const activeIsApi = Boolean(activeAgent && !subscriptionProviders.includes(activeAgent.provider));
   const activeApiChoice = activeIsApi ? choices.find(choice => choice.id === activeAgent.provider) : null;
   const activeApiModel = activeIsApi ? agentInfo.models.find(item => item.provider === activeAgent.provider && item.model === activeAgent.model) : null;
   apiService.querySelector('small').textContent = activeIsApi
@@ -355,6 +367,7 @@ function renderModelSettings() {
   else apiService.removeAttribute('aria-current');
   chatService.setAttribute('aria-expanded', String(id === 'openai-codex' && !connected));
   claudeService.setAttribute('aria-expanded', String(id === claudeProvider && !connected));
+  antigravityService.setAttribute('aria-expanded', String(id === antigravityProvider && !connected));
   if (connected && (apiOpen || showSubscriptionModel)) {
     const models = agentInfo.models.filter(model => model.provider === provider.id);
     setOptions(modelEl, models.map(model => ({ value: model.model, label: model.name || model.model })), draftSelection?.model);
@@ -363,8 +376,13 @@ function renderModelSettings() {
     setOptions(thinkingEl, levels.map(level => ({ value: level, label: thinkingNames[level] ?? level })), draftSelection?.thinkingLevel);
     draftSelection = model ? { provider: model.provider, model: model.model, thinkingLevel: fieldValue(thinkingEl) } : null;
   }
+  const lost = !guided && !currentAgent() ? unavailableSelection(agentSelection, agentInfo.models) : null;
+  modelUnavailable.hidden = !lost;
+  if (lost) document.getElementById('model-unavailable-text').textContent = `Saved model ${lost.model} is unavailable right now.`;
   modelHint.textContent = !choices.length ? 'No providers found. Check that Pi is installed.'
-    : provider && !connected && (provider.signin || provider.key) ? `Connect ${provider.name} to choose a model.` : '';
+    : provider && !connected && (provider.signin || provider.key) ? `Connect ${provider.name} to choose a model.`
+    : connected && [claudeProvider, antigravityProvider].includes(provider.id) ? 'Typing suggestions are off with this provider: each one starts a slow agent session. Press Cmd/Ctrl+Enter to ask for one.'
+    : '';
   renderConnection(provider);
   syncGuidedMode();
 }
@@ -378,12 +396,30 @@ function renderConnection(provider) {
   connectSignin.hidden = connectRow.hidden || !provider.signin || modelSetup !== 'openai-codex';
   connectClaude.hidden = connectRow.hidden || provider.id !== claudeProvider;
   if (!connectClaude.hidden) {
-    const installed = agentInfo.claudeCode.installed;
+    const status = agentInfo.claudeCode ?? {};
+    const installed = Boolean(status.installed);
+    const claudeInstalled = status.claudeInstalled ?? installed;
+    const adapterInstalled = status.adapterInstalled ?? installed;
     document.getElementById('claude-connect-hint').textContent = installed
       ? 'Sign in with Claude Pro or Max in Terminal, then check the connection here.'
-      : 'Install Claude Code and the ACP adapter, then sign in from Terminal.';
+      : claudeInstalled && !adapterInstalled
+        ? 'Claude Code is installed, but the ACP adapter is missing. Install it in Terminal, then check the connection here.'
+        : !claudeInstalled && adapterInstalled
+          ? 'The ACP adapter is installed, but Claude Code CLI is missing. Install Claude Code, then sign in from Terminal.'
+          : 'Install Claude Code and the ACP adapter, then sign in from Terminal.';
     document.getElementById('claude-command').hidden = !installed;
+    const adapterCommand = document.getElementById('claude-adapter-command');
+    if (adapterCommand) adapterCommand.hidden = adapterInstalled;
     document.getElementById('claude-install').hidden = installed;
+  }
+  connectAntigravity.hidden = connectRow.hidden || provider.id !== antigravityProvider;
+  if (!connectAntigravity.hidden) {
+    const installed = Boolean(agentInfo.antigravity?.installed);
+    document.getElementById('antigravity-connect-hint').textContent = installed
+      ? 'Sign in to Antigravity in Terminal, then check the connection here.'
+      : 'Install Antigravity (agy), then sign in from Terminal.';
+    document.getElementById('antigravity-command').hidden = !installed;
+    document.getElementById('antigravity-install').hidden = installed;
   }
   connectKey.hidden = connectRow.hidden || modelSetup !== 'api' || !provider.key;
   if (!connectKey.hidden) {
@@ -398,13 +434,13 @@ function renderConnection(provider) {
     return span;
   };
   const line = [];
-  if (connected && ['openai-codex', claudeProvider].includes(provider.id)) {
+  if (connected && subscriptionProviders.includes(provider.id)) {
     // Subscription status is shown on its service card.
   } else if (connected && provider.key?.configured && provider.key.source !== 'environment') {
     line.push(statusEl('Connected with an API key. '), removeKeyButton(provider));
   } else if (connected) {
     line.push(statusEl(provider.key?.source === 'environment' ? `Connected to ${provider.name} with a key from the environment.` : `Connected to ${provider.name}.`));
-  } else if (provider && !provider.signin && !provider.key && provider.id !== claudeProvider) {
+  } else if (provider && !provider.signin && !provider.key && provider.id !== claudeProvider && provider.id !== antigravityProvider) {
     line.push('This provider is configured outside Stilura.');
   }
   connectionLine.replaceChildren(...line);
@@ -490,8 +526,8 @@ function selectProvider(id) {
 const connectedTo = selectProvider;
 
 
-async function refreshAgent() {
-  agentInfo = await api('/api/agent/status');
+async function refreshAgent({ force = false } = {}) {
+  agentInfo = await api(force ? '/api/agent/status?refresh=1' : '/api/agent/status');
   const savedNormalized = normalizeSelection(agentSelection);
   if (savedNormalized) {
     // Saved model still exists in current catalog — keep it.
@@ -543,21 +579,23 @@ showSettingsTab(settingsDialog.dataset.tab);
 // and leaves the tab the writer was last on. 'welcome' is the first-run way
 // in: the Model tab with the ChatGPT card focused.
 async function openSettings(tab) {
-  const welcome = tab === 'welcome';
-  if (typeof tab === 'string') showSettingsTab(welcome ? 'models' : tab);
+  // A saved model that is merely unavailable keeps its normal Settings; the
+  // first-run welcome is for writers who never connected anything.
+  const welcome = tab === 'welcome' && !unavailableSelection(agentSelection, agentInfo.models);
+  if (typeof tab === 'string') showSettingsTab(tab === 'welcome' ? 'models' : tab);
   settingsError.textContent = '';
   try { await refreshAgent(); } catch (error) { settingsError.textContent = error.message; }
   await refreshOAuth();
   draftSelection = currentAgent();
   draftProvider = null;
-  if (welcome || !draftSelection) {
+  if (welcome || (!draftSelection && !unavailableSelection(agentSelection, agentInfo.models))) {
     settingsDialog.dataset.guided = 'true';
     guidedStep = 1;
   } else {
     delete settingsDialog.dataset.guided;
     guidedStep = 1;
   }
-  modelSetup = draftSelection && !['openai-codex', claudeProvider].includes(draftSelection.provider) ? 'api' : '';
+  modelSetup = draftSelection && !subscriptionProviders.includes(draftSelection.provider) ? 'api' : '';
   renderModelSettings();
   renderOAuthFlow();
   if (!settingsDialog.open) settingsDialog.showModal();
@@ -578,6 +616,14 @@ document.getElementById('claude-copy').addEventListener('click', async event => 
     setTimeout(() => { button.textContent = 'Copy'; }, 1500);
   } catch { button.textContent = 'Copy failed'; }
 });
+document.getElementById('claude-adapter-copy')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  try {
+    await navigator.clipboard.writeText('npm i -g @agentclientprotocol/claude-agent-acp');
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+  } catch { button.textContent = 'Copy failed'; }
+});
 document.getElementById('claude-recheck').addEventListener('click', async event => {
   const button = event.currentTarget;
   const prevText = button.textContent;
@@ -585,10 +631,39 @@ document.getElementById('claude-recheck').addEventListener('click', async event 
   button.textContent = 'Checking…';
   settingsError.textContent = '';
   try {
-    await refreshAgent();
+    await refreshAgent({ force: true });
     if (modelSetup !== claudeProvider) return;
     selectProvider(claudeProvider);
     if (!agentInfo.claudeCode?.plan) settingsError.textContent = 'Claude Code is not connected to a Pro or Max account.';
+  } catch (error) { settingsError.textContent = error.message; }
+  finally {
+    button.disabled = false;
+    button.textContent = prevText;
+  }
+});
+document.getElementById('antigravity-copy')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  try {
+    await navigator.clipboard.writeText('agy acp --login');
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+  } catch { button.textContent = 'Copy failed'; }
+});
+document.getElementById('antigravity-recheck')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const prevText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Checking…';
+  settingsError.textContent = '';
+  try {
+    await refreshAgent({ force: true });
+    if (modelSetup !== antigravityProvider) return;
+    selectProvider(antigravityProvider);
+    if (!agentInfo.antigravity?.loggedIn) {
+      settingsError.textContent = agentInfo.antigravity?.installed
+        ? 'Antigravity is not signed in. Run agy acp --login in Terminal.'
+        : 'Antigravity (agy) was not found. Install it and check again.';
+    }
   } catch (error) { settingsError.textContent = error.message; }
   finally {
     button.disabled = false;
@@ -929,6 +1004,11 @@ claudeService.addEventListener('click', () => {
   if (settingsDialog.dataset.guided === 'true') guidedStep = 2;
   selectProvider(claudeProvider);
 });
+antigravityService.addEventListener('click', () => {
+  modelSetup = antigravityProvider;
+  if (settingsDialog.dataset.guided === 'true') guidedStep = 2;
+  selectProvider(antigravityProvider);
+});
 apiService.addEventListener('click', () => {
   const fromStep1 = settingsDialog.dataset.guided === 'true' && guidedStep === 1;
   modelSetup = fromStep1 ? 'api' : (modelSetup === 'api' ? '' : 'api');
@@ -936,6 +1016,11 @@ apiService.addEventListener('click', () => {
   draftProvider = null;
   renderModelSettings();
   if (modelSetup === 'api') providerEl.focus();
+});
+document.getElementById('model-unavailable-pick').addEventListener('click', () => {
+  settingsDialog.dataset.guided = 'true';
+  guidedStep = 1;
+  renderModelSettings();
 });
 document.getElementById('guided-back')?.addEventListener('click', () => {
   guidedStep = 1;
@@ -1010,7 +1095,7 @@ const { cancelSuggestion, suggestSchedule, suggestionUpdate, suggestFetch, pendi
   slashRequest: state => slashRequest(state),
   ensureAgent: () => ensureAgent(),
   activeSuggestAgent: () => activeSuggestAgent(),
-  backgroundAllowed: () => currentAgent()?.provider !== claudeProvider,
+  backgroundAllowed: () => ![claudeProvider, antigravityProvider].includes(currentAgent()?.provider),
   currentAgent: () => currentAgent(),
   briefContext: () => briefContext(),
   startJob: options => startJob(options),
@@ -1114,22 +1199,6 @@ function chatScroll(stick, smooth = false) {
   chatStream.scrollTop = top;
 }
 
-// Bring a node into view without yanking when it is already fully visible.
-function scrollToNode(node, block = 'nearest') {
-  if (!node?.isConnected) return;
-  try { node.scrollIntoView({ block, behavior: reduceMotion() ? 'auto' : 'smooth' }); }
-  catch { try { node.scrollIntoView(); } catch {} }
-}
-
-// Soft way out: fade first, detach after. Bulk operations (document switch,
-// conversation reset) still remove instantly — one farewell at a time.
-function fadeRemove(node, ms = 160) {
-  if (!node?.isConnected) return;
-  if (reduceMotion()) { node.remove(); return; }
-  node.classList.add('is-leaving');
-  setTimeout(() => node.remove(), ms);
-}
-
 function saveChat() {
   docStorage.setItem('wa-chat', JSON.stringify({ document: workView.state.doc.toString(), messages: chatHistory.slice(-20) }));
 }
@@ -1140,7 +1209,7 @@ function restoreChat() {
   if (!Array.isArray(messages)) return;
   chatHistory = messages.filter(message => message && ['user', 'assistant'].includes(message.role) && typeof message.content === 'string').slice(-20);
   for (const message of chatHistory) {
-    if (message.role === 'user') streamAppend(chatEl('div', 'chat-entry is-user', message.display ?? message.content));
+    if (message.role === 'user') streamAppend(el('div', 'chat-entry is-user', message.display ?? message.content));
     else {
       message.edits = Array.isArray(message.edits) ? message.edits.filter(edit => edit && typeof edit.quote === 'string' && typeof edit.replacement === 'string' && typeof edit.label === 'string').slice(0, 8) : [];
       for (const edit of message.edits) {
@@ -1148,7 +1217,7 @@ function restoreChat() {
           if (edit.state !== 'unlocated') edit.state = 'stale';
         }
       }
-      renderChatAnswer(streamAppend(chatEl('div', 'chat-entry is-agent is-markdown')), message);
+      renderChatAnswer(streamAppend(el('div', 'chat-entry is-agent is-markdown')), message);
     }
   }
   // Folded into the pill by default: history is kept and reopens with it,
@@ -1162,13 +1231,13 @@ function renderChatAnswer(reply, message) {
   for (const edit of message.edits || []) reply.append(chatEditCard(edit));
 }
 function chatEditCard(edit) {
-  const card = chatEl('section', 'chat-edit-card');
+  const card = el('section', 'chat-edit-card');
   card.setAttribute('aria-label', edit.label);
-  card.append(chatEl('strong', 'chat-edit-title', edit.label));
-  card.append(chatEl('p', 'chat-edit-replacement', edit.replacement || '(Remove this passage)'));
-  const actions = chatEl('div', 'chat-edit-actions');
+  card.append(el('strong', 'chat-edit-title', edit.label));
+  card.append(el('p', 'chat-edit-replacement', edit.replacement || '(Remove this passage)'));
+  const actions = el('div', 'chat-edit-actions');
   const button = (name, handler) => {
-    const node = chatEl('button', 'review-action', name); node.type = 'button';
+    const node = el('button', 'review-action', name); node.type = 'button';
     node.addEventListener('click', handler); actions.append(node); return node;
   };
   const preview = button('Preview', () => {
@@ -1186,9 +1255,9 @@ function chatEditCard(edit) {
   const keep = button('Keep original', () => { clearPlainPreview(); edit.state = 'kept'; saveChat(); syncChatEditCards(); undo.focus(); });
   // Undo speaks the same receipt language as applied variants: one quiet pill
   // in its own footer row, not another button in the action row.
-  const undoFoot = chatEl('div', 'variant-undo-row');
+  const undoFoot = el('div', 'variant-undo-row');
   undoFoot.hidden = true;
-  const undo = chatEl('button', 'chat-action', 'Undo');
+  const undo = el('button', 'chat-action', 'Undo');
   undo.type = 'button';
   undo.title = 'Put the passage back as it was';
   undo.addEventListener('click', () => {
@@ -1206,7 +1275,7 @@ function chatEditCard(edit) {
     changeChatEdit(edit);
   });
   retarget.classList.add('is-primary');
-  const status = chatEl('p', 'chat-edit-status'); status.setAttribute('role', 'status');
+  const status = el('p', 'chat-edit-status'); status.setAttribute('role', 'status');
   actions.prepend(status);
   card.append(actions, undoFoot);
   chatEditCards.set(edit, { card, actions, preview, apply, keep, undo, undoFoot, retarget, status });
@@ -1738,7 +1807,7 @@ function noteExcerpt(note) {
 }
 
 function noteCard(note) {
-  const card = chatEl('div', 'note-card');
+  const card = el('div', 'note-card');
   card.dataset.noteId = note.id;
   card.tabIndex = 0;
   card.setAttribute('aria-label', 'Margin note. Press Enter to edit.');
@@ -1773,40 +1842,40 @@ function renderNoteCard(note, card = noteCards.get(note.id)) {
   // the context — just the text. In the stream there is no beside, so the
   // quote travels with it; a document note names the whole draft instead.
   const scope = note.para === null ? 'Whole draft' : noteExcerpt(note);
-  if (inStream || note.para === null) card.append(chatEl('div', 'note-quote', note.para === null ? scope : `“${scope}”`));
-  const body = chatEl('div', 'note-text', note.text);
+  if (inStream || note.para === null) card.append(el('div', 'note-quote', note.para === null ? scope : `“${scope}”`));
+  const body = el('div', 'note-text', note.text);
   body.addEventListener('click', event => { event.stopPropagation(); editNoteCard(note.id); });
   // The × stands inline, right after the last word: it is where the eye
   // finishes reading, instead of a corner of a box that has no visible edge.
-  const del = chatEl('button', 'note-del', '×');
+  const del = el('button', 'note-del', '×');
   del.type = 'button';
   del.setAttribute('aria-label', 'Delete note');
   del.title = 'Delete note';
   del.addEventListener('click', event => { event.stopPropagation(); deleteNote(note.id); });
   body.append(del);
   if (note.resolved && work) {
-    const completed = chatEl('details', 'note-completed');
-    completed.append(chatEl('summary', '', 'Completed note'), body); card.append(completed);
+    const completed = el('details', 'note-completed');
+    completed.append(el('summary', '', 'Completed note'), body); card.append(completed);
   } else card.append(body);
-  if (note.drifted) card.append(chatEl('div', 'note-meta', 'text changed — check this note'));
+  if (note.drifted) card.append(el('div', 'note-meta', 'text changed — check this note'));
   if (work) {
     const labels = { queued: 'Queued', working: 'Agent writing', review: 'Review changes', done: 'Done', reverted: 'Reverted', blocked: 'Needs input' };
-    const status = chatEl('div', 'note-meta', labels[work.status] || 'Queued');
+    const status = el('div', 'note-meta', labels[work.status] || 'Queued');
     status.setAttribute('role', 'status'); card.append(status);
-    if (work.error) card.append(chatEl('div', 'note-meta', work.error));
+    if (work.error) card.append(el('div', 'note-meta', work.error));
     for (const attempt of work.attempts || []) {
-      const details = chatEl('details', 'note-work-result');
-      details.append(chatEl('summary', '', attempt === latest ? 'Agent result' : 'Previous result'));
-      if (attempt.comment) details.append(chatEl('p', '', attempt.comment));
+      const details = el('details', 'note-work-result');
+      details.append(el('summary', '', attempt === latest ? 'Agent result' : 'Previous result'));
+      if (attempt.comment) details.append(el('p', '', attempt.comment));
       for (const edit of attempt.edits) {
-        details.append(chatEl('del', 'note-before', edit.before), chatEl('ins', 'note-after', edit.after));
+        details.append(el('del', 'note-before', edit.before), el('ins', 'note-after', edit.after));
       }
       card.append(details);
     }
-    for (const message of work.messages || []) card.append(chatEl('p', 'note-feedback', message.text));
-    const actions = chatEl('div', 'note-work-actions');
+    for (const message of work.messages || []) card.append(el('p', 'note-feedback', message.text));
+    const actions = el('div', 'note-work-actions');
     const button = (label, type, extra = {}) => {
-      const el = chatEl('button', 'chat-action', label); el.type = 'button';
+      const el = el('button', 'chat-action', label); el.type = 'button';
       el.addEventListener('click', () => updateNoteWork(note.id, type, extra)); actions.append(el);
       return el;
     };
@@ -2195,25 +2264,25 @@ function renderBriefQuestion() {
   if (!briefSession) return;
   briefSession.card?.remove();
   const step = (positionBrief?.questions || BRIEF_STEPS)[briefSession.step];
-  const card = chatEl('div', 'chat-entry is-agent brief-card');
-  const head = chatEl('div', 'brief-head');
-  head.append(chatEl('span', 'brief-kicker', 'Positioning brief'));
-  head.append(chatEl('span', 'brief-step', `${briefSession.step + 1} of ${BRIEF_STEPS.length}`));
+  const card = el('div', 'chat-entry is-agent brief-card');
+  const head = el('div', 'brief-head');
+  head.append(el('span', 'brief-kicker', 'Positioning brief'));
+  head.append(el('span', 'brief-step', `${briefSession.step + 1} of ${BRIEF_STEPS.length}`));
   card.append(head);
-  card.append(chatEl('p', 'brief-question', briefSession.loading ? 'Preparing questions for your draft…' : step.question));
-  const options = chatEl('div', 'brief-options');
+  card.append(el('p', 'brief-question', briefSession.loading ? 'Preparing questions for your draft…' : step.question));
+  const options = el('div', 'brief-options');
   options.setAttribute('role', 'group');
   options.setAttribute('aria-label', step.question);
   for (const option of briefSession.loading ? [] : step.options) {
-    const pick = chatEl('button', 'brief-option', option);
+    const pick = el('button', 'brief-option', option);
     pick.type = 'button';
     pick.addEventListener('click', () => answerBriefStep(option));
     options.append(pick);
   }
   card.append(options);
-  const foot = chatEl('div', 'brief-foot');
-  foot.append(chatEl('span', 'variant-hint', briefSession.loading ? '' : 'Or type your own answer below.'));
-  const skip = chatEl('button', 'brief-skip', 'Skip for now');
+  const foot = el('div', 'brief-foot');
+  foot.append(el('span', 'variant-hint', briefSession.loading ? '' : 'Or type your own answer below.'));
+  const skip = el('button', 'brief-skip', 'Skip for now');
   skip.type = 'button';
   skip.addEventListener('click', () => cancelBrief());
   foot.append(skip);
@@ -2249,18 +2318,18 @@ function finishBrief() {
 }
 
 function renderBriefSummary() {
-  const card = chatEl('div', 'chat-entry is-agent brief-card');
-  const head = chatEl('div', 'brief-head');
-  head.append(chatEl('span', 'brief-kicker', 'Positioning brief'));
-  if (positionBrief.updatedAt) head.append(chatEl('span', 'brief-step', new Date(positionBrief.updatedAt).toLocaleDateString()));
+  const card = el('div', 'chat-entry is-agent brief-card');
+  const head = el('div', 'brief-head');
+  head.append(el('span', 'brief-kicker', 'Positioning brief'));
+  if (positionBrief.updatedAt) head.append(el('span', 'brief-step', new Date(positionBrief.updatedAt).toLocaleDateString()));
   card.append(head);
-  const rows = chatEl('div', 'brief-rows');
+  const rows = el('div', 'brief-rows');
   for (let index = 0; index < BRIEF_STEPS.length; index++) {
     const step = BRIEF_STEPS[index];
-    const row = chatEl('div', 'brief-row');
-    row.append(chatEl('span', 'brief-label', step.label));
-    row.append(chatEl('span', 'brief-value', positionBrief[step.key]));
-    const edit = chatEl('button', 'brief-edit', 'Edit');
+    const row = el('div', 'brief-row');
+    row.append(el('span', 'brief-label', step.label));
+    row.append(el('span', 'brief-value', positionBrief[step.key]));
+    const edit = el('button', 'brief-edit', 'Edit');
     edit.type = 'button';
     edit.setAttribute('aria-label', `Edit ${step.label.toLowerCase()}`);
     edit.addEventListener('click', () => {
@@ -2273,9 +2342,9 @@ function renderBriefSummary() {
     rows.append(row);
   }
   card.append(rows);
-  if (positionBrief.direction) card.append(chatEl('p', 'brief-value', positionBrief.direction));
+  if (positionBrief.direction) card.append(el('p', 'brief-value', positionBrief.direction));
   const meta = 'Used for suggestions, rewrites, chat and ideas. To update from chat: “For the whole draft: …”.';
-  card.append(chatEl('p', 'variant-hint', meta));
+  card.append(el('p', 'variant-hint', meta));
   chatAdd(card);
 }
 
@@ -2468,22 +2537,22 @@ function renderSlashMenu() {
   const matched = slashMatches();
   slashMenu.replaceChildren();
   if (!matched.length) {
-    slashMenu.append(chatEl('p', 'slash-empty', 'No matching command — try /brief.'));
+    slashMenu.append(el('p', 'slash-empty', 'No matching command — try /brief.'));
   } else {
     if (slashActive < 0 || slashActive >= matched.length) slashActive = 0;
     matched.forEach((item, index) => {
-      const row = chatEl('button', 'slash-item' + (index === slashActive ? ' is-active' : ''));
+      const row = el('button', 'slash-item' + (index === slashActive ? ' is-active' : ''));
       row.type = 'button';
       row.id = `slash-item-${index}`;
       row.setAttribute('role', 'option');
       row.setAttribute('aria-selected', String(index === slashActive));
-      const badge = chatEl('span', 'slash-icon', '');
+      const badge = el('span', 'slash-icon', '');
       badge.innerHTML = icon(item.icon);
       badge.setAttribute('aria-hidden', 'true');
-      const text = chatEl('span', 'slash-text', '');
-      const name = chatEl('span', 'slash-name', item.title + ' ');
-      name.append(chatEl('span', 'slash-cmd', `/${item.name}`));
-      text.append(name, chatEl('span', 'slash-desc', item.desc));
+      const text = el('span', 'slash-text', '');
+      const name = el('span', 'slash-name', item.title + ' ');
+      name.append(el('span', 'slash-cmd', `/${item.name}`));
+      text.append(name, el('span', 'slash-desc', item.desc));
       row.append(badge, text);
       // Mousedown would blur the composer and hide the menu before the click
       // lands; the click then reads as leaving the field. Hold focus instead.
@@ -2523,7 +2592,7 @@ async function chatSend() {
     if (!text) return;
     chatInput.value = '';
     chatResize();
-    streamAppend(chatEl('div', 'chat-entry is-user', text));
+    streamAppend(el('div', 'chat-entry is-user', text));
     answerBriefStep(text);
     return;
   }
@@ -2531,7 +2600,7 @@ async function chatSend() {
   if (!await ensureAgent()) return;
   chatInput.value = '';
   chatResize();
-  chatAdd(chatEl('div', 'chat-entry is-user', text));
+  chatAdd(el('div', 'chat-entry is-user', text));
 
   chatHistory.push({ role: 'user', content: text });
   saveChat();
@@ -2539,8 +2608,8 @@ async function chatSend() {
 }
 
 function newReplyBubble() {
-  const reply = chatAdd(chatEl('div', 'chat-entry is-agent is-markdown'));
-  reply.append(chatEl('span', 'chat-caret'));
+  const reply = chatAdd(el('div', 'chat-entry is-agent is-markdown'));
+  reply.append(el('span', 'chat-caret'));
   return reply;
 }
 
@@ -2717,7 +2786,10 @@ chatClear.addEventListener('click', () => {
 
 // Cmd/Ctrl+K opens the same local field as Change.
 document.addEventListener('keydown', event => {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && !settingsDialog.open) {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+    if (document.querySelector('dialog[open]')) return;
+    const active = document.activeElement;
+    if (active !== document.body && !workView.dom.contains(active)) return;
     event.preventDefault();
     openPassage(workView, workView.state.selection.main);
   }
@@ -2817,7 +2889,7 @@ const workView = new EditorView({
           run(view) {
             if (generate.job()) { generate.job().abort(); return true; }
             if (passage.job()) { passage.job().abort(); return true; }
-            if (view.state.field(passageField)) { closePassage(view); return true; }
+            if (view.state.field(passageField)) { closePassage(view, { restoreSelection: true }); return true; }
             const ghost = view.state.field(ghostField);
             const pending = suggestPending();
             if (!ghost && !pending) return false;
@@ -2931,7 +3003,10 @@ const workView = new EditorView({
 
       EditorView.updateListener.of(update => {
         if (passage.job() && (!update.state.field(passageField) || update.state.readOnly || docState.loadingDocument || docState.savePaused)) passage.job().abort();
-        if (generate.job() && (!update.state.field(generationField) || update.state.readOnly || docState.loadingDocument || docState.savePaused)) generate.job().abort();
+        if (generate.job() && (!update.state.field(generationField) || update.state.readOnly || docState.loadingDocument || docState.savePaused)) {
+          if (!generate.job().signal.aborted) notify('Generation stopped because the draft changed or was reloaded. Your request is unchanged.');
+          generate.job().abort();
+        }
         if (update.selectionSet && !update.docChanged) for (const ui of chatEditCards.values()) if (!ui.retarget.hidden) syncRetarget(ui);
         if (update.docChanged) {
           liveSync?.changed(update.changes);
@@ -2993,7 +3068,7 @@ function saveSnapshot(label) {
   const snapshots = safeJson(docStorage.getItem('snapshots'), []);
   if (!Array.isArray(snapshots)) return;
   snapshots.unshift({ text: workView.state.doc.toString(), at: new Date().toISOString(), label });
-  docStorage.setItem('snapshots', JSON.stringify(snapshots.slice(0, 10)));
+  docStorage.setItem('snapshots', JSON.stringify(limitSnapshots(snapshots)));
 }
 function exportText(text, name = 'draft.md') {
   const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
@@ -3003,16 +3078,16 @@ function exportText(text, name = 'draft.md') {
 }
 function dialog(title) {
   const trigger = document.activeElement;
-  const modal = chatEl('dialog', 'settings-dialog document-dialog');
-  const heading = chatEl('h2', '', title);
+  const modal = el('dialog', 'settings-dialog document-dialog');
+  const heading = el('h2', '', title);
   heading.id = 'document-dialog-' + crypto.randomUUID();
   modal.setAttribute('aria-labelledby', heading.id);
   // Title left, one × right — the same header the settings dialog has. A
   // full-width `Close` button under the title read as the dialog's action.
-  const close = chatEl('button', 'dialog-close', '×');
+  const close = el('button', 'dialog-close', '×');
   close.setAttribute('aria-label', 'Close');
   close.addEventListener('click', () => modal.close());
-  const head = chatEl('header', '');
+  const head = el('header', '');
   head.append(heading, close);
   modal.append(head);
   document.body.append(modal);
@@ -3169,7 +3244,7 @@ function renderDriftDiff() {
     // whole document reprinted around them.
     if (op.type === 'keep' && text.length > 400) text = text.slice(0, 200) + ' ⋯ ' + text.slice(-200);
     if (shown + text.length > 30000) {
-      driftDiffBody.append(chatEl('p', 'drift-diff-more', '… further differences truncated'));
+      driftDiffBody.append(el('p', 'drift-diff-more', '… further differences truncated'));
       break;
     }
     shown += text.length;
@@ -3181,7 +3256,7 @@ function renderDriftDiff() {
       driftDiffBody.append(mark);
     }
   }
-  const legend = chatEl('p', 'drift-legend', 'Struck text lives only on disk · highlighted text only in your copy');
+  const legend = el('p', 'drift-legend', 'Struck text lives only on disk · highlighted text only in your copy');
   driftDiffBody.prepend(legend);
 }
 document.getElementById('drift-load').addEventListener('click', () => {
@@ -3200,6 +3275,7 @@ document.getElementById('drift-keep').addEventListener('click', () => {
 });
 function restoreDocument(current) {
   docState.documentKey = 'stilura:' + current.id + ':';
+  try { pruneTabCopies(localStorage, docState.documentKey, tabId); } catch {}
   docState.documentName = current.name ?? current.path.split(/[\\/]/).pop();
   // Capture the old baseline before installing the current disk revision.
   const driftBase = lastDiskBaseline();
@@ -3376,22 +3452,6 @@ const fileList = document.getElementById('file-list');
 const fileFilter = document.getElementById('file-filter');
 let sidebarFiles = [];
 let sidebarToggleTimer = null;
-function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-// Card timestamp: short relative age, falling back to a date past a month.
-function timeAgo(iso) {
-  const at = new Date(iso).getTime();
-  if (!at) return '';
-  const seconds = Math.max(0, (Date.now() - at) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 30 * 86400) return `${Math.floor(seconds / 86400)}d ago`;
-  return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
 // True only where the sidebar is a layer over the draft rather than a column
 // beside it — the same 640px the stylesheet switches the panel to `fixed` at.
 // Above it the panel is part of the layout, and dismissing it on Escape or a
@@ -3426,111 +3486,16 @@ function setSidebar(open, persist = true) {
   if (persist) { try { localStorage.setItem('wa-sidebar', open ? 'open' : 'closed'); } catch {} }
   if (open) refreshFileList();
 }
-function renderFileList() {
-  const query = fileFilter.value.trim().toLowerCase();
-  const shown = sidebarFiles.filter(file => !query || file.name.toLowerCase().includes(query));
-  fileList.replaceChildren();
-  if (!sidebarFiles.length) {
-    fileList.append(chatEl('li', 'file-list-empty', 'No Markdown or text files here yet.'));
-    return;
-  }
-  if (!shown.length) {
-    fileList.append(chatEl('li', 'file-list-empty', 'Nothing matches this filter.'));
-    return;
-  }
-  for (const file of shown) {
-    const item = document.createElement('li');
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = 'file-card';
-    // The card shows name, age and excerpt; the size stays in the tooltip.
-    row.title = `${file.name} · ${formatFileSize(file.size)}`;
-    if (file.name === docState.documentName) row.setAttribute('aria-current', 'true');
-    const top = chatEl('span', 'file-card-top');
-    const name = chatEl('span', 'file-name', '');
-    name.textContent = file.name;
-    const meta = chatEl('span', 'file-meta', '');
-    meta.textContent = timeAgo(file.mtime);
-    top.append(name, meta);
-    row.append(top);
-    if (file.excerpt) {
-      const excerpt = chatEl('span', 'file-excerpt', '');
-      excerpt.textContent = file.excerpt;
-      row.append(excerpt);
-    }
-    // Opening a file is the end of the visit to the panel, so on a narrow
-    // window the overlay gets out of the way of the draft it just replaced.
-    row.addEventListener('click', () => {
-      if (sidebarIsOverlay()) setSidebar(false);
-      switchDocument(file.name);
-    });
-    item.append(row);
-    // The home draft is where Stilura opens, so it keeps its name and stays.
-    if (!file.home) {
-      item.classList.add('has-file-actions');
-      item.append(fileActions(file, item));
-    }
-    fileList.append(item);
-  }
-}
-function fileActions(file, item) {
-  const actions = chatEl('span', 'file-actions');
-  const toggle = chatEl('button', 'file-more', '⋯');
-  toggle.type = 'button';
-  toggle.setAttribute('aria-label', `Actions for ${file.name}`);
-  toggle.setAttribute('aria-expanded', 'false');
-  const panel = chatEl('span', 'file-action-panel');
-  panel.setAttribute('popover', 'auto');
-  toggle.popoverTargetElement = panel;
-  panel.addEventListener('beforetoggle', event => {
-    const open = event.newState === 'open';
-    item.classList.toggle('file-menu-open', open);
-    toggle.setAttribute('aria-expanded', String(open));
-    if (open) {
-      const bounds = toggle.getBoundingClientRect();
-      panel.style.left = `${Math.max(8, bounds.right - 152)}px`;
-      panel.style.top = `${Math.min(bounds.bottom + 4, window.innerHeight - 88)}px`;
-    }
-  });
-  const rename = chatEl('button', 'file-action', 'Rename');
-  rename.type = 'button';
-  rename.autofocus = true;
-  rename.addEventListener('click', () => { panel.hidePopover(); startRename(file, item); });
-  const remove = chatEl('button', 'file-action', 'Move to Trash');
-  remove.type = 'button';
-  remove.addEventListener('click', () => { panel.hidePopover(); deleteFile(file.name); });
-  panel.append(rename, remove);
-  actions.append(toggle, panel);
-  return actions;
-}
-
-// Renaming happens in place: Enter keeps the new name, Escape or leaving
-// the field keeps the old one.
-function startRename(file, item) {
-  const input = chatEl('input', 'file-rename');
-  Object.assign(input, { type: 'text', value: file.name, spellcheck: false });
-  input.setAttribute('aria-label', `New name for ${file.name}`);
-  item.classList.add('is-renaming');
-  // The field stands in for the card, not inside it: keys typed into a
-  // field inside a button would press the button.
-  item.querySelector('.file-card').hidden = true;
-  item.prepend(input);
-  input.focus();
-  input.setSelectionRange(0, file.name.replace(/\.(md|markdown|txt)$/i, '').length);
-  let done = false;
-  const finish = async commit => {
-    if (done) return;
-    done = true;
-    const to = commit ? newFileName(input.value) : null;
-    if (!to || to === file.name) { renderFileList(); return; }
-    await renameFile(file.name, to);
-  };
-  input.addEventListener('keydown', event => {
-    if (event.key === 'Enter') { event.preventDefault(); finish(true); }
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(false); }
-  });
-  input.addEventListener('blur', () => finish(false));
-}
+const renderFileList = createFileList({
+  list: fileList, filter: fileFilter,
+  files: () => sidebarFiles,
+  currentName: () => docState.documentName,
+  // Opening a file is the end of the visit to the panel, so on a narrow
+  // window the overlay gets out of the way of the draft it just replaced.
+  open: name => { if (sidebarIsOverlay()) setSidebar(false); switchDocument(name); },
+  rename: renameFile,
+  remove: deleteFile,
+});
 
 // Browser-side copies (working text, chat, notes, brief) are stored under
 // the document's id, which follows its path: move them with the rename.
@@ -3681,104 +3646,12 @@ document.getElementById('file-open').addEventListener('click', () => fileInput.c
 fileInput.addEventListener('change', () => { importFile(fileInput.files[0]); fileInput.value = ''; });
 editorWrap.addEventListener('dragover', event => event.preventDefault());
 editorWrap.addEventListener('drop', event => { event.preventDefault(); importFile(event.dataTransfer?.files?.[0]); });
-document.getElementById('file-history').addEventListener('click', async () => {
-  const modal = dialog('Document history');
-  modal.classList.add('history-dialog');
-  const current = workView.state.doc.toString();
-  const search = document.createElement('input');
-  search.type = 'search';
-  search.className = 'history-search';
-  search.placeholder = 'Search versions';
-  search.setAttribute('aria-label', 'Search versions');
-  search.autocomplete = 'off';
-  search.spellcheck = false;
-  const list = chatEl('div', 'history-list');
-  const toolbar = chatEl('div', 'history-toolbar');
-  toolbar.append(search);
-  modal.append(toolbar, list);
-  search.focus();
-  let versions = [];
-  function renderHistory() {
-    const query = search.value.trim();
-    const matchQuery = query ? new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu') : null;
-    const shown = versions.map((item, index) => ({
-      item, newer: index ? versions[index - 1].text : current,
-      match: matchQuery?.exec(item.text),
-    })).filter(({ item, match }) => !matchQuery || match || matchQuery.test(item.label || 'Saved to disk'));
-    list.replaceChildren();
-    for (const { item, newer, match } of shown) {
-      const row = chatEl('div', 'history-item');
-      const words = item.text.match(/\S+/g)?.length ?? 0;
-      row.append(chatEl('div', 'history-when',
-        `${new Date(item.at).toLocaleString()} · ${item.label || 'Saved to disk'} · ${words} ${words === 1 ? 'word' : 'words'}`));
-      if (match) {
-        const matchEnd = match.index + match[0].length;
-        const start = Math.max(0, match.index - 60);
-        const end = Math.min(item.text.length, matchEnd + 90);
-        const excerpt = chatEl('div', 'history-match');
-        excerpt.append(
-          (start ? '…' : '') + item.text.slice(start, match.index),
-          chatEl('mark', '', match[0]),
-          item.text.slice(matchEnd, end) + (end < item.text.length ? '…' : ''),
-        );
-        row.append(excerpt);
-      }
-      if (item.text !== newer) {
-        const diff = chatEl('div', 'history-diff');
-        diff.setAttribute('aria-label', 'Changes in the next version');
-        const ops = wordDiff(item.text, newer);
-        const first = ops.findIndex(op => op.type !== 'keep');
-        const last = ops.findLastIndex(op => op.type !== 'keep');
-        let remaining = 1400;
-        for (let index = Math.max(0, first - 1); index <= Math.min(ops.length - 1, last + 1); index++) {
-          const { type, text } = ops[index];
-          const context = type === 'keep' && text.length > 100
-            ? index < first ? '…' + text.slice(-50) : index > last ? text.slice(0, 50) + '…' : text.slice(0, 50) + ' … ' + text.slice(-50)
-            : text;
-          const excerpt = context.slice(0, remaining);
-          if (type === 'keep') diff.append(excerpt);
-          else diff.append(chatEl(type === 'del' ? 'del' : 'ins', type === 'del' ? 'drift-del' : 'drift-ins', excerpt));
-          remaining -= excerpt.length;
-          if (!remaining) { if (excerpt.length < context.length || index < last) diff.append('…'); break; }
-        }
-        row.append(diff);
-      } else {
-        row.append(chatEl('div', 'history-current', 'No changes in the next version'));
-      }
-      if (item.text !== current) {
-        const full = document.createElement('details');
-        const preview = chatEl('pre', 'passage-preview', '');
-        full.append(chatEl('summary', '', 'Full text'), preview);
-        full.addEventListener('toggle', () => {
-          if (full.open && !preview.textContent) preview.textContent = item.text;
-        }, { once: true });
-        const restore = chatEl('button', '', 'Restore');
-        restore.addEventListener('click', () => { modal.close(); replaceDraft(item.text, 'Version restored'); });
-        row.append(full, restore);
-      }
-      list.append(row);
-    }
-    if (!versions.length) list.append(chatEl('p', '', 'No previous versions yet. One is kept before every save, import, and AI replacement.'));
-    else if (!shown.length) list.append(chatEl('p', '', 'Nothing matches this search.'));
-  }
-  search.addEventListener('input', renderHistory);
-  try {
-    const { snapshots } = await api(draftUrl('/history'));
-    const local = safeJson(docStorage.getItem('snapshots'), []);
-    if (!Array.isArray(local)) throw new Error('Local history is corrupt');
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || !key.startsWith(docState.documentKey + 'wa-working:') || key.endsWith(':' + tabId)) continue;
-      let text = null;
-      try { text = localStorage.getItem(key); } catch {}
-      if (typeof text === 'string' && text !== current) local.push({ text, at: new Date().toISOString(), label: 'Copy from another tab' });
-    }
-    versions = [...local, ...snapshots].sort((a, b) => b.at.localeCompare(a.at));
-    renderHistory();
-    list.after(chatEl('small', 'history-note',
-      'Last 20 disk versions and 10 browser checkpoints. Disk copies sit beside the draft in .stilura-history and are never deleted automatically.'));
-  } catch (error) { list.append(chatEl('p', 'history-note', error.message)); }
-});
+document.getElementById('file-history').addEventListener('click', createHistory({
+  dialog, api, draftUrl, docStorage, localStorage, tabId,
+  documentKey: () => docState.documentKey,
+  currentText: () => workView.state.doc.toString(),
+  replaceDraft,
+}));
 
 // ─── Quick switcher ─── (src/features/switcher.js)
 async function createNamedFile(name) {

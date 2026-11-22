@@ -9,7 +9,8 @@ function models(data, selected = null) {
   $('model').replaceChildren(new Option('App default', 'null'));
   let found = !selected;
   for (const model of data.models ?? []) {
-    const agent = { provider: model.provider, model: model.model, thinkingLevel: 'off' };
+    const thinkingLevel = model.thinkingLevels?.includes('off') ? 'off' : (model.thinkingLevels?.[0] ?? 'off');
+    const agent = { provider: model.provider, model: model.model, thinkingLevel };
     const option = new Option(`${model.name} · ${model.provider}`, JSON.stringify(agent));
     option.selected = selected?.provider === agent.provider && selected?.model === agent.model;
     if (option.selected) found = true;

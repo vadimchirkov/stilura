@@ -95,13 +95,13 @@ export function parseSuggestion(prefix, raw, after = '') {
 }
 
 export async function requestSuggestion(input, complete) {
-  const { document = '', cursor = document.length, selection, signal } = input;
+  const { document = '', cursor = document.length, selection, signal, documentId } = input;
   const prompts = suggestionPrompts(input);
   let userPrompt = prompts.userPrompt;
   for (let attempt = 1; attempt <= 2; attempt++) {
     signal?.throwIfAborted();
     // Provider errors are outside format recovery: retrying a key or quota cannot fix it.
-    const raw = await complete({ ...prompts, userPrompt, selection, signal, continuation: true });
+    const raw = await complete({ ...prompts, userPrompt, selection, signal, continuation: true, documentId });
     signal?.throwIfAborted();
     try { return parseSuggestion(document.slice(0, cursor), raw, document.slice(cursor)); }
     catch (error) {

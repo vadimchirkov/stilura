@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createServer } from 'node:http';
+import http, { createServer } from 'node:http';
+import { gunzipSync } from 'node:zlib';
 import { patchRanges } from '../editing.js';
 
 assert.deepEqual(patchRanges('A B A', [{ old: 'A', new: 'B', all: true }, { old: 'B', new: 'C' }]), [
@@ -34,7 +35,12 @@ const modelServer = createServer(async (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const content = body.includes('inline writing assistant')
     ? body.includes('FORMAT_STAYS_BAD') ? 'Unlabeled answer' : body.includes('FORMAT CORRECTION') ? 'TEXT: and continued' : 'Unlabeled answer'
-    : body.includes('Help with the SELECTED TEXT') ? '<stilura-edits>' + JSON.stringify([{ quote: 'quiet', replacement: 'peaceful', label: 'Synonym' }]) + '</stilura-edits>'
+    : body.includes('Help with the SELECTED TEXT')
+      ? body.includes('ASK_RETRY_FAIL')
+        ? '<stilura-edits>' + JSON.stringify([{ quote: 'A quiet room.', replacement: 'A calm room.', label: 'Too wide' }]) + '</stilura-edits>'
+        : body.includes('ASK_RETRY_OK') && !body.includes('CORRECTION:')
+          ? '<stilura-edits>' + JSON.stringify([{ quote: 'A quiet room.', replacement: 'A calm room.', label: 'Too wide' }]) + '</stilura-edits>'
+          : '<stilura-edits>' + JSON.stringify([{ quote: 'quiet', replacement: 'peaceful', label: 'Synonym' }]) + '</stilura-edits>'
     : JSON.stringify(['A clearer passage.', 'A sharper passage.', 'A shorter passage.']);
   const chunk = { id: 'test', object: 'chat.completion.chunk', created: 0, model: 'model', choices: [{ index: 0, delta: { content }, finish_reason: null }] };
   res.write(`data: ${JSON.stringify(chunk)}\n\n`);
@@ -91,12 +97,42 @@ try {
   assert.equal((await fetch(endpoint + '/api/agent/status?unexpected=1', { headers: extensionHeaders })).status, 403);
   assert.equal((await fetch(endpoint + '/rewrite', { headers: extensionHeaders })).status, 405);
   assert.equal((await fetch(endpoint + '/api/agent/status', { headers: extensionHeaders })).status, 200);
+  const statusWith = encoding => new Promise((resolve, reject) => http.get(endpoint + '/api/agent/status', { headers: { ...extensionHeaders, 'Accept-Encoding': encoding } }, res => {
+    const chunks = [];
+    res.on('data', chunk => chunks.push(chunk));
+    res.on('end', () => resolve({ headers: res.headers, body: Buffer.concat(chunks) }));
+  }).on('error', reject));
+  const status = await statusWith('gzip');
+  assert.equal(status.headers['content-encoding'], 'gzip');
+  for (const refused of ['gzip;q=0', 'br, gzip; q=0.0', 'identity']) assert.equal((await statusWith(refused)).headers['content-encoding'], undefined, refused);
+  assert.equal((await statusWith('br, gzip;q=0.5')).headers['content-encoding'], 'gzip');
+  assert.equal(JSON.parse(gunzipSync(status.body)).models.some(item => item.provider === 'test' && item.model === 'model'), true);
   const extensionRewrite = await fetch(endpoint + '/rewrite', { method: 'POST', headers: extensionHeaders, body: JSON.stringify(rewriteInput) });
   assert.equal(extensionRewrite.status, 200);
   assert.equal((await extensionRewrite.json()).variants.length, 3);
   const extensionAsk = await fetch(endpoint + '/ask', { method: 'POST', headers: extensionHeaders, body: JSON.stringify(rewriteInput) });
   assert.equal(extensionAsk.status, 200);
   assert.deepEqual((await extensionAsk.json()).variants, ['peaceful']);
+  assert(!JSON.stringify(requests.at(-1).messages).includes('Outside the selection'), '/ask prompt must not contradict single-span rule');
+
+  // /ask performs one corrective retry on out-of-scope edits, and fails with 502 if both attempts exceed selection.
+  let beforeAsk = requests.length;
+  const askRetried = await fetch(endpoint + '/ask', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...rewriteInput, instruction: 'ASK_RETRY_OK' }),
+  });
+  assert.equal(askRetried.status, 200);
+  assert.deepEqual((await askRetried.json()).variants, ['peaceful']);
+  assert.equal(requests.length - beforeAsk, 2);
+
+  beforeAsk = requests.length;
+  const askFailed = await fetch(endpoint + '/ask', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...rewriteInput, instruction: 'ASK_RETRY_FAIL' }),
+  });
+  assert.equal(askFailed.status, 502);
+  assert.match((await askFailed.json()).error, /exceeded the selected passage/);
+  assert.equal(requests.length - beforeAsk, 2);
   assert.equal((await fetch(endpoint + '/ask', { method: 'POST', headers: extensionHeaders,
     body: JSON.stringify({ ...rewriteInput, from: 0 }) })).status, 400);
   const httpRewrite = await fetch(endpoint + '/rewrite', {
@@ -120,6 +156,17 @@ try {
   assert.equal(invalidBody.code, 'SUGGESTION_FORMAT');
   assert.equal(invalidBody.attempts, 2);
   assert.equal(requests.length - beforeSuggestions, 2);
+
+  // /suggest accepts drafts over 60,000 chars (up to 1 MB) and sends only cursorWindow to the model.
+  const longDoc = 'START_MARKER ' + 'word '.repeat(14_000) + 'END_MARKER';
+  assert(longDoc.length > 60_000);
+  const longSuggest = await suggestHTTP(longDoc);
+  assert.equal(longSuggest.status, 200);
+  assert.equal((await longSuggest.json()).suggestion, ' and continued');
+  const longPrompt = JSON.stringify(requests.at(-1).messages);
+  assert(!longPrompt.includes('START_MARKER'), 'long /suggest must window out distant prefix');
+  assert(longPrompt.includes('END_MARKER'), 'long /suggest must include text near cursor');
+  assert(longPrompt.length < 20_000, 'long /suggest prompt must stay bounded by cursorWindow');
 
   console.log('HTTP task checks passed: patch validation, rewrite prompts, extension authentication/route isolation and bounded suggestion recovery with a local model stub.');
 } finally {

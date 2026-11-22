@@ -2,9 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { loadPuppeteer } from './browser-driver.mjs';
+import { launchBrowser, loadPuppeteer, startStilura } from './browser-driver.mjs';
 
 // One Model tab: with nothing connected the dialog opens on ChatGPT sign-in;
 // picking another provider shows its key field instead of Model/Reasoning,
@@ -54,27 +52,11 @@ createInterface({ input: process.stdin }).on('line', line => {
 const env = Object.fromEntries(Object.entries(process.env)
   .filter(([name]) => !/API_KEY|TOKEN|SECRET|^AWS_|^GOOGLE_|^AZURE_|^PI_/.test(name)));
 
-const server = spawn(process.execPath, [fileURLToPath(new URL('../index.js', import.meta.url))], {
-  cwd: directory,
-  env: { ...env, PORT: '0', STILURA_NO_OPEN: '1', DRAFT_FILE: draft, STILURA_OFFLINE_MODELS: '1',
-    PI_CODING_AGENT_DIR: path.join(directory, 'pi'), STILURA_CLAUDE_CODE: claude, STILURA_CLAUDE_ACP: adapter },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-const url = await new Promise((resolve, reject) => {
-  let output = '';
-  const timer = setTimeout(() => reject(new Error(`Stilura did not start: ${output}`)), 30000);
-  server.stdout.on('data', chunk => {
-    output += chunk;
-    const match = output.match(/Stilura → (http:\/\/127\.0\.0\.1:\d+)/);
-    if (match) { clearTimeout(timer); resolve(match[1]); }
-  });
-  server.stderr.on('data', chunk => { output += chunk; });
-});
+const { server, url } = await startStilura({ directory, draft,
+  env: { ...env, STILURA_AGY: '/nonexistent', STILURA_OFFLINE_MODELS: '1',
+    PI_CODING_AGENT_DIR: path.join(directory, 'pi'), STILURA_CLAUDE_CODE: claude, STILURA_CLAUDE_ACP: adapter } });
 
-const browser = await puppeteer.launch({
-  headless: true,
-  executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-});
+const browser = await launchBrowser(puppeteer);
 try {
   const page = await browser.newPage();
   const errors = [];
@@ -169,6 +151,15 @@ try {
   const stream = await write.text();
   assert.match(stream, /The door closed/);
   assert.match(stream, /\[DONE\]/);
+  // A saved model the catalog no longer lists is "unavailable", not a first run.
+  await page.evaluate(() => localStorage.setItem('wa-agent', JSON.stringify({ provider: 'openai', model: 'gone-model', thinkingLevel: 'medium' })));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => document.getElementById('settings-dialog').open && !document.getElementById('model-unavailable').hidden);
+  assert.match(await page.$eval('#model-unavailable-text', node => node.textContent), /Saved model gone-model is unavailable/);
+  assert.equal(await page.$eval('#settings-dialog', node => node.dataset.guided ?? ''), '');
+  await page.click('#model-unavailable-pick');
+  assert.equal(await page.$eval('#settings-dialog', node => node.dataset.guided), 'true');
+  assert.equal(await visible('#model-unavailable'), false);
   assert.deepEqual(errors, []);
   console.log('Settings browser checks passed: first-run ChatGPT, unconnected provider key field, connect, remove, Claude Pro recheck, passage preview/accept and streamed generation.');
 } finally {

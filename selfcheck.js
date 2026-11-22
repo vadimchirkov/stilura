@@ -5,6 +5,7 @@ import { LocalLinter, createBinaryModuleFromUrl } from 'harper.js';
 import { clampThinkingLevel } from '@earendil-works/pi-ai';
 import { getAgentStatus } from './pi.js';
 import { CLAUDE_CODE } from './claude-code.js';
+import { ANTIGRAVITY } from './antigravity.js';
 import { renderMarkdown } from './markdown.js';
 import { lintMarkers, ignoreMarker } from './spellcheck.js';
 import { clampBubble, resolveDrift, unwrapProse, wordDiff } from './editing.js';
@@ -39,17 +40,19 @@ import {
 // Keep the mock at the provider boundary, not at the truncation guard.
 {
   const source = fs.readFileSync(new URL('./pi.js', import.meta.url), 'utf8');
-  const server = fs.readFileSync(new URL('./index.js', import.meta.url), 'utf8');
-  assert.match(server.slice(server.indexOf("if (url.pathname === '/suggest')")), /requestSuggestion\(/);
+  const server = fs.readFileSync(new URL('./ai-routes.js', import.meta.url), 'utf8');
+  assert.match(server.slice(server.indexOf('async function suggest(')), /requestSuggestion\(/);
   const code = source.slice(source.indexOf('const options ='), source.indexOf('export async function streamText')).replace('export ', '');
   let response, sent;
   const model = { reasoning: true };
   const selection = { thinkingLevel: 'high' };
   const context = vm.createContext({
     CLAUDE_CODE,
+    ANTIGRAVITY,
     resolveModel: async () => ({ model, selection, rt: { completeSimple: async (_model, _request, options) => { sent = options; return response; } } }),
     selectionFor: (model, level) => ({ thinkingLevel: clampThinkingLevel(model, level) }),
     request: () => ({}),
+    suggestSessionId: () => 'stilura-suggest',
   });
   vm.runInContext(code, context);
   response = { stopReason: 'length', content: [{ type: 'text', text: 'the next useful wor' }] };

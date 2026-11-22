@@ -1,7 +1,7 @@
 (async () => {
   if (document.documentElement.dataset.stiluraExtension) return;
   document.documentElement.dataset.stiluraExtension = '1';
-  const { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, ghostRemainder, distinctVariants, reviewAction, rewriteInstruction } = await import(chrome.runtime.getURL('writing-rules.js'));
+  const { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, armedSurvives, passageShortcut, ghostRemainder, distinctVariants, reviewAction, rewriteInstruction } = await import(chrome.runtime.getURL('writing-rules.js'));
   const { EDITOR_UI_CSS, createPassageInput } = await import(chrome.runtime.getURL('editor-ui.js'));
   let review = null, fallback = null, armed = null, dismissed = null, pausedUntil = 0;
   let config = {}, field = null, timer, scheduled = null, port = null, hintPort = null, target = null, actionType = '', suggestion = '', composing = false;
@@ -440,6 +440,7 @@
     cancel(); dismissed = null; field = next;
     const command = slash(now);
     if (event.isTrusted && command && ((event.inputType === 'insertText' && event.data === '/') || (oldArmed?.el === next && oldArmed.from === command.from))) armed = { el: next, from: command.from };
+    else if (event.isTrusted && !command && oldArmed?.el === next && now?.from === now.to && armedSurvives(oldArmed.from, now.document, now.from)) armed = oldArmed;
     toolbar();
     if (event.isTrusted && !event.isComposing) scheduleSuggestion();
   }, true);
@@ -472,6 +473,15 @@
       if (action === 'Regenerate') { consume(); regenerate(); return; }
       if (action === 'Next' || action === 'Previous') { consume(); cycle(action === 'Next' ? 1 : -1); return; }
       if (action === 'Edit') { apply(review.saved, review.variants[review.index]); return; }
+    }
+    if (passageShortcut(event) && !port) {
+      const saved = snapshot();
+      // Rich editors use Cmd/Ctrl+K for "insert link"; only plain fields are ours.
+      if (saved && 'value' in saved.el && saved.from !== saved.to) {
+        consume();
+        if (!config.connected) error('Connect to Stilura from the Chrome toolbar first.'); else rewrite(saved);
+      }
+      return;
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.altKey) {
       const saved = snapshot(), command = slash(saved);

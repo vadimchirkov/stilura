@@ -74,17 +74,48 @@ function atomicJson(file, value) {
   } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
 }
 
-export function documentSessions() {
+export function documentSessions({ idleMs = 5 * 60_000 } = {}) {
   const sessions = new Map();
   let url;
+  let reaper = null;
+  function stopReaper() {
+    if (!reaper) return;
+    clearInterval(reaper);
+    reaper = null;
+  }
+  function sweep() {
+    if (!(idleMs > 0)) return;
+    const now = Date.now();
+    for (const [file, session] of sessions) {
+      if (session.canEvict(idleMs, now)) {
+        session.close();
+        sessions.delete(file);
+      }
+    }
+    if (!sessions.size) stopReaper();
+  }
+  function ensureReaper() {
+    if (!(idleMs > 0) || reaper) return;
+    const interval = Math.max(10, Math.min(idleMs, 30_000));
+    reaper = setInterval(sweep, interval);
+    reaper.unref();
+  }
+  // The session this server already holds for a file, marked as in use.
+  function held(file) {
+    const session = sessions.get(file);
+    session?.touch();
+    return session;
+  }
   function get(filename) {
     const store = documentStore(filename), file = store.read().path;
-    if (sessions.has(file)) return sessions.get(file);
+    const existing = held(file);
+    if (existing) return existing;
     const other = readSessionAddress(file);
     if (other && other.pid !== process.pid) throw Object.assign(new Error('This document is already open in another Stilura server.'), { status: 409 });
     const session = createSession(store, { trackChanges: true });
     sessions.set(file, session);
     if (url) session.advertise(url);
+    ensureReaper();
     return session;
   }
   return {
@@ -93,8 +124,9 @@ export function documentSessions() {
     // server it advertises. Only waits when a foreign claim is on disk, so
     // opening a draft you hold yourself stays synchronous.
     async getVerified(filename) {
-      const store = documentStore(filename), file = store.read().path;
-      if (sessions.has(file)) return sessions.get(file);
+      const file = documentStore(filename).read().path;
+      const existing = held(file);
+      if (existing) return existing;
       const other = readSessionAddress(file);
       if (other && other.pid !== process.pid && !await answers(other)) forgetSession(file, other.token);
       return get(filename);
@@ -108,13 +140,31 @@ export function documentSessions() {
       if (other && other.pid !== process.pid) throw Object.assign(new Error('This document is open in another Stilura server.'), { status: 409 });
       sessions.get(file)?.close();
       sessions.delete(file);
+      if (!sessions.size) stopReaper();
     },
-    close() { for (const session of sessions.values()) session.close(); },
+    close() {
+      stopReaper();
+      for (const session of sessions.values()) session.close();
+      sessions.clear();
+    },
   };
 }
 
-export function createSession(store, { trackChanges = false } = {}) {
+function statSignature(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${stat.mtimeMs}:${stat.size}:${stat.ctimeMs}:${stat.ino}`;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    return undefined;
+  }
+}
+
+export function createSession(store, { trackChanges = false, pollMs = 500 } = {}) {
   let disk = store.read(), doc = text(disk.text), base = doc;
+  let lastStat = statSignature(disk.path);
+  let lastActivity = Date.now(), closed = false, poll = null;
+  const touch = () => { lastActivity = Date.now(); };
   let epoch = randomUUID(), baseVersion = 0, updates = [], logBytes = 0;
   let notes = [], notesVersion = 0, notesReady = false;
   const noteOperations = new Set();
@@ -145,10 +195,28 @@ export function createSession(store, { trackChanges = false } = {}) {
   const broadcast = event => { for (const listener of listeners) listener(event); };
   function refresh() {
     const current = store.read();
+    lastStat = statSignature(current.path);
     if (current.revision === disk.revision) return;
     disk = current; doc = base = text(disk.text); epoch = randomUUID();
     baseVersion = 0; updates = []; logBytes = 0;
     broadcast({ type: 'reset', current: snapshot() });
+  }
+  function pollDisk() {
+    try {
+      const sig = statSignature(disk.path);
+      if (sig !== undefined && sig === lastStat) return;
+      refresh();
+    } catch {}
+  }
+  function startPolling() {
+    if (poll || closed) return;
+    poll = setInterval(pollDisk, pollMs);
+    poll.unref();
+  }
+  function stopPolling() {
+    if (!poll) return;
+    clearInterval(poll);
+    poll = null;
   }
   function since(from, expectedEpoch) {
     if (expectedEpoch !== epoch || !Number.isInteger(from) || from < baseVersion || from > version()) throw conflict('Document history changed. Read the current draft before retrying.');
@@ -180,6 +248,7 @@ export function createSession(store, { trackChanges = false } = {}) {
     const checkpoint = incoming.some(update => !update.clientID.startsWith('editor:')) || Date.now() - lastSnapshot > 10000;
     try { disk = store.write(next.toString(), disk.revision, { snapshot: checkpoint }); }
     catch (error) { if (notesReady) saveNotes(notes); else if (decorate) fs.unlinkSync(notesFile); throw error; }
+    lastStat = statSignature(disk.path);
     if (checkpoint) lastSnapshot = Date.now();
     const from = version();
     doc = next; notes = mapped;
@@ -418,14 +487,38 @@ export function createSession(store, { trackChanges = false } = {}) {
     publishWork([...notes, note]);
     return { id, revision: revision() };
   }
-  const poll = setInterval(() => { try { refresh(); } catch {} }, 500);
-  poll.unref();
   return {
-    read() { refresh(); return snapshot(); }, push, patch, write, events, updateNotes, claimWork, finishWork, work, suggestNote,
+    read() { touch(); refresh(); return snapshot(); },
+    push(body) { touch(); return push(body); },
+    patch(edits, expected, decorate) { touch(); return patch(edits, expected, decorate); },
+    write(value, expected, options) { touch(); return write(value, expected, options); },
+    events(from, expectedEpoch) { touch(); return events(from, expectedEpoch); },
+    updateNotes(body) { touch(); return updateNotes(body); },
+    claimWork(agent) { touch(); return claimWork(agent); },
+    finishWork(body) { touch(); return finishWork(body); },
+    work(body) { touch(); return work(body); },
+    suggestNote(body) { touch(); return suggestNote(body); },
     history: store.history,
-    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    touch,
+    get polling() { return poll !== null; },
+    canEvict(idleMs, now = Date.now()) {
+      return listeners.size === 0
+        && !notes.some(note => note.work?.status === 'working')
+        && (now - lastActivity >= idleMs);
+    },
+    subscribe(listener) {
+      touch();
+      listeners.add(listener);
+      startPolling();
+      return () => {
+        listeners.delete(listener);
+        touch();
+        if (!listeners.size) stopPolling();
+      };
+    },
     token,
     advertise(url) {
+      touch();
       const file = sessionFile(disk.path), existing = readSessionAddress(disk.path);
       if (existing?.token === token) return;
       if (existing) throw conflict('This document is already open in another Stilura server.');
@@ -435,7 +528,8 @@ export function createSession(store, { trackChanges = false } = {}) {
       finally { fs.closeSync(fd); }
     },
     close() {
-      clearInterval(poll);
+      closed = true;
+      stopPolling();
       try { if (JSON.parse(fs.readFileSync(sessionFile(disk.path), 'utf8')).token === token) fs.unlinkSync(sessionFile(disk.path)); } catch {}
       listeners.clear();
     },

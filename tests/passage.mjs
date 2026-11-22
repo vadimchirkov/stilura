@@ -7,6 +7,7 @@ import { EditorState, StateField, StateEffect } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType, showTooltip } from '@codemirror/view';
 import { history, undo, isolateHistory } from '@codemirror/commands';
 import { mapChatEdit } from '../chat-edits.js';
+import { modelError } from '../src/notices.js';
 import { appSection, appSource, generateIn, passageIn } from './app-source.mjs';
 
 const source = appSource;
@@ -123,6 +124,124 @@ await noModel.ask();
 assert.equal(noModel.requests.length, 0);
 assert.equal(noModel.view.state.field(noModel.field).busy, false);
 assert.equal(noModel.jobs.size, 0);
+
+// Non-JSON error bodies preserve the HTTP status for modelError instead of throwing SyntaxError.
+{
+  const problems = [];
+  const nonJson = setup();
+  nonJson.context.modelError = modelError;
+  nonJson.context.notifyProblem = problem => problems.push(problem);
+  nonJson.configure('Make it clearer.');
+
+  nonJson.context.fetch = async () => ({ ok: false, status: 502, text: async () => 'Bad Gateway' });
+  await nonJson.ask();
+  assert.equal(problems.length, 1);
+  assert.equal(problems[0].say, 'The provider hit an error.');
+  assert.equal(problems[0].act, 'retry');
+  assert.equal(problems[0].detail, 'HTTP 502');
+
+  nonJson.context.fetch = async () => ({ ok: false, status: 413, text: async () => '<html>413 Payload Too Large</html>' });
+  await nonJson.ask();
+  assert.equal(problems.length, 2);
+  assert.match(problems[1].say, /too long/i);
+  assert.equal(problems[1].act, 'settings');
+  assert.equal(problems[1].detail, 'HTTP 413');
+
+  nonJson.context.fetch = async () => ({ ok: true, status: 200, text: async () => '<html>not json</html>' });
+  await nonJson.ask();
+  assert.equal(problems.length, 3);
+  assert.equal(problems[2].detail, 'The model returned an invalid response.');
+  assert.equal(problems[2].act, 'retry');
+}
+
+// modelError extracts structured/embedded HTTP codes and routes local auth/setup failures to Settings.
+{
+  const fromProp = modelError(Object.assign(new Error('Unauthorized'), { status: 401 }));
+  assert.equal(fromProp.say, 'The API key was rejected.');
+  assert.equal(fromProp.act, 'settings');
+
+  const embedded429 = modelError(new Error('Provider failed with status 429: try again in 12s'));
+  assert.equal(embedded429.say, 'The model is rate-limited. Try again in 12 s.');
+  assert.equal(embedded429.act, 'retry');
+
+  const embedded401 = modelError(new Error('Upstream HTTP 401 invalid api key'));
+  assert.equal(embedded401.say, 'The API key was rejected.');
+  assert.equal(embedded401.act, 'settings');
+
+  // Arbitrary numbers like "4000 characters" must not be misread as HTTP 400.
+  const notAStatus = modelError(new Error('Select up to 4000 characters.'));
+  assert.equal(notAStatus.say, 'The model could not answer.');
+  assert.equal(notAStatus.act, 'retry');
+
+  for (const message of [
+    'Pi model openai/gpt-4o is not authenticated or unavailable',
+    'Unknown Pi model foo/bar',
+    'No authenticated Pi model available',
+    'Run claude auth login and sign in with Claude Pro or Max.',
+    'Install Claude Code and claude-agent-acp, then check the connection in Settings.',
+    'Install Antigravity (agy), then check the connection in Settings.',
+    'Antigravity is not signed in. Run agy acp --login in Terminal.',
+  ]) {
+    const res = modelError(new Error(message));
+    assert.equal(res.act, 'settings', message);
+    assert.equal(res.tab, 'models', message);
+    assert.notEqual(res.say, 'The model could not answer.', message);
+  }
+}
+
+// Try again on requestPassage restores a closed passageField when the quote is intact, and skips if mutated.
+{
+  const retries = [];
+  const p = setup();
+  const okFetch = p.context.fetch;
+  p.context.notifyProblem = (problem, action) => { p.notices.push(problem.say); retries.push(action); };
+  p.configure('Make it simpler.');
+  p.context.fetch = async () => ({ ok: false, status: 502, text: async () => 'Bad Gateway' });
+  await p.ask();
+  assert.equal(typeof retries[0], 'function');
+
+  // Close the passage tooltip before clicking Try again.
+  p.context.closePassage(p.view);
+  assert.equal(p.view.state.field(p.field), null);
+  p.context.fetch = okFetch;
+  await retries[0]();
+  assert(p.view.state.field(p.field), 'Try again must restore passageField');
+  assert.equal(p.view.state.field(p.gen).text, 'peaceful');
+
+  // If the quoted text changed after closing passageField, Try again must not fire.
+  const pChanged = setup();
+  const changedRetries = [];
+  pChanged.context.notifyProblem = (problem, action) => { pChanged.notices.push(problem.say); changedRetries.push(action); };
+  pChanged.configure('Make it simpler.');
+  pChanged.context.fetch = async () => ({ ok: false, status: 502, text: async () => 'Bad Gateway' });
+  await pChanged.ask();
+  pChanged.context.closePassage(pChanged.view);
+  const qFrom = draft.indexOf('quiet');
+  pChanged.view.dispatch({ changes: { from: qFrom, to: qFrom + 5, insert: 'noisy' } });
+  const beforeCalls = pChanged.requests.length;
+  await changedRetries[0]();
+  assert.equal(pChanged.view.state.field(pChanged.field), null, 'must not reopen passageField when quote changed');
+  assert.equal(pChanged.requests.length, beforeCalls, 'must not retry when quote changed');
+}
+
+// Cancelling with restoreSelection restores the original selection; default close keeps the collapsed caret.
+{
+  const from = draft.indexOf('quiet'), to = from + 5;
+  const restored = setup();
+  assert.equal(restored.view.state.selection.main.anchor, to);
+  assert.equal(restored.view.state.selection.main.head, to);
+  restored.context.closePassage(restored.view, { restoreSelection: true });
+  assert.equal(restored.view.state.field(restored.field), null);
+  assert.equal(restored.view.state.selection.main.anchor, from);
+  assert.equal(restored.view.state.selection.main.head, to);
+
+  const plainClose = setup();
+  plainClose.context.closePassage(plainClose.view);
+  assert.equal(plainClose.view.state.field(plainClose.field), null);
+  assert.equal(plainClose.view.state.selection.main.anchor, to);
+  assert.equal(plainClose.view.state.selection.main.head, to);
+}
+
 console.log('Passage checks passed: local questions, synonyms, mapped replacements, regeneration, stale guards and Undo.');
 
 const modelScope = vm.createContext({ currentAgent: () => ({ provider: 'shared', model: 'one' }) });

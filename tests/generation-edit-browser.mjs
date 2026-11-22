@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { loadPuppeteer } from './browser-driver.mjs';
+import { launchBrowser, loadPuppeteer } from './browser-driver.mjs';
 
 const puppeteer = loadPuppeteer();
 const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
@@ -30,7 +30,7 @@ const bundle = await build({ stdin: { resolveDir: process.cwd(), contents: `
     view.focus();
   };
 ` }, bundle: true, write: false, format: 'iife' });
-const browser = await puppeteer.launch({ headless: true, executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
+const browser = await launchBrowser(puppeteer);
 try {
   const page = await browser.newPage();
   const errors = [];

@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import { EditorState, Compartment, Transaction } from '@codemirror/state';
 import { history, undo } from '@codemirror/commands';
 import { openStorage } from '../src/storage.js';
+import { documentStore, MAX_HISTORY_SNAPSHOTS } from '../document-store.js';
 import { resolveDrift, unwrapProse } from '../editing.js';
 import { appSection, docContext } from './app-source.mjs';
 
@@ -323,4 +324,36 @@ try {
   if (running) { running.kill(); if (running.exitCode === null) await once(running, 'exit'); }
   fs.rmSync(temp, { recursive: true, force: true });
 }
+// History snapshots are pruned to MAX_HISTORY_SNAPSHOTS while keeping foreign files intact.
+{
+  const retentionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stilura-history-retention-'));
+  try {
+    const file = path.join(retentionDir, 'draft.md');
+    const historyDir = `${file}.stilura-history`;
+    const store = documentStore(file);
+    let state = store.write('v0', 'missing');
+    fs.mkdirSync(historyDir, { recursive: true });
+    fs.writeFileSync(path.join(historyDir, 'keep.txt'), 'foreign file');
+    const totalSnapshots = MAX_HISTORY_SNAPSHOTS + 5;
+    for (let i = 1; i <= totalSnapshots; i++) {
+      state = store.write(`v${i}`, state.revision);
+    }
+    const entries = fs.readdirSync(historyDir);
+    const snapshotFiles = entries.filter(name => /^\d+-[a-f0-9-]+\.json$/.test(name));
+    assert.equal(snapshotFiles.length, MAX_HISTORY_SNAPSHOTS, 'history dir must retain at most MAX_HISTORY_SNAPSHOTS snapshots');
+    assert(entries.includes('keep.txt'), 'non-snapshot files in history dir must not be deleted');
+    const savedTexts = new Set(snapshotFiles.map(name => JSON.parse(fs.readFileSync(path.join(historyDir, name), 'utf8')).text));
+    assert(savedTexts.has(`v${totalSnapshots - 1}`), 'newest snapshot must be retained');
+    for (let i = 0; i < totalSnapshots - MAX_HISTORY_SNAPSHOTS; i++) {
+      assert(!savedTexts.has(`v${i}`), `oldest snapshot v${i} must be pruned`);
+    }
+    const recent = store.history();
+    assert.equal(recent.length, 20, 'history() still returns 20 latest snapshots');
+    assert.equal(recent[0].text, `v${totalSnapshots - 1}`);
+    assert.equal(recent[19].text, `v${totalSnapshots - 20}`);
+  } finally {
+    fs.rmSync(retentionDir, { recursive: true, force: true });
+  }
+}
+
 console.log('Persistence checks passed: isolated undo/files, guarded writes, brief recovery, export fallback, save ordering, desktop state across ports and exit acknowledgement.');

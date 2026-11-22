@@ -20,6 +20,11 @@ export function reviewAction(event, variants = 1) {
   return key.length === 1 && !ctrlKey && !metaKey && !altKey ? 'Edit' : null;
 }
 
+// Cmd/Ctrl+K asks about the selection, as in the Stilura editor.
+export function passageShortcut(event) {
+  return (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && !event.isComposing && event.key?.toLowerCase() === 'k';
+}
+
 export function paragraphEnd(text, cursor) {
   if (cursor < 0 || cursor > text.length || (cursor < text.length && text[cursor] !== '\n')) return false;
   const next = text.indexOf('\n', cursor + 1);
@@ -27,17 +32,28 @@ export function paragraphEnd(text, cursor) {
 }
 
 // A command is a slash at the start of the line or after a space, running to
-// the end of the line. Prose may hold a lone slash first ("1 / 2", "and /
-// or"), so the command starts at the first slash with a word right after it
+// the end of the line. Prose may hold a lone slash ("1 / 2", "and / or") or a
+// filesystem/API path ("/etc/hosts", "/api/draft"), which are not commands;
+// the command starts at the first non-path slash with a word right after it
 // ("/write"); paths and slashes inside the request ("/explain /usr/bin",
-// "/compare A / B") stay part of it. With no such slash, the last one is the
-// command: a bare "/" just typed, or "/ request" written with a space.
+// "/compare A / B") stay part of it. With no such slash, a leading slash
+// ("/ request") or a bare trailing "/" is the command.
 export function slashCommand(line, offset = 0) {
-  const starts = [...line.matchAll(/(?:^|\s)\/(?!\/)/gu)].map(match => match.index + match[0].length - 1);
+  const starts = [...line.matchAll(/(?:^|\s)\/(?!\/)/gu)]
+    .map(match => match.index + match[0].length - 1)
+    .filter(at => !/^\/[^\s/]+\//u.test(line.slice(at)));
   if (!starts.length) return null;
-  const start = starts.find(at => /\S/u.test(line[at + 1] ?? '')) ?? starts.at(-1);
+  const start = starts.find(at => /\S/u.test(line[at + 1] ?? ''))
+    ?? starts.findLast(at => !line.slice(0, at).trim() || !line.slice(at + 1).trim());
+  if (start === undefined) return null;
   return { from: offset + start, to: offset + line.length, text: line.slice(start),
     instruction: line.slice(start + 1).trim(), inline: !!line.slice(0, start).trim() };
+}
+
+// An armed slash survives edits on its own line (a typo fix with the caret
+// left of the line end); Enter still re-checks the command at the line end.
+export function armedSurvives(from, document, caret) {
+  return document[from] === '/' && caret >= from && !document.slice(from, caret).includes('\n');
 }
 
 export function ghostRemainder(text, typed) {

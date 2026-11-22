@@ -1375,13 +1375,6 @@ html, body {
   to   { opacity: 1; translate: 0 0; }
 }
 
-/* Soft way out, paired with fadeRemove(): fade first, detach after. */
-.is-leaving {
-  opacity: 0 !important;
-  transition: opacity .16s ease !important;
-  pointer-events: none !important;
-}
-
 /* Assistant message: standard card, chat-rise for gentler arrival. */
 .chat-entry:not(.is-user) {
   animation: chat-rise .22s var(--ease);
@@ -2572,7 +2565,7 @@ body.focus-mode .editor-shortcuts { display: none; }
 }
 @media (hover: hover) { .settings-dialog .guided-back:hover { background: var(--surface-2); color: var(--text); } }
 #settings-dialog[data-guided="true"][data-guided-step="2"] .model-services {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }

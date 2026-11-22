@@ -1,6 +1,7 @@
 import { createPassageInput } from '../extension/editor-ui.js';
 import * as writingRules from '../extension/writing-rules.js';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import vm from 'node:vm';
 import { EditorState, StateField, StateEffect, Transaction } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
@@ -331,15 +332,97 @@ assert.equal(commands.requests.length, 0, 'no generation was started');
   assert.equal(test.view.state.field(test.field).text, 'A different garden.');
 }
 
-// URLs, word separators and comments are ordinary text, not slash requests.
+// URLs, word separators, paths and comments are ordinary text, not slash requests.
 {
   const test = setup();
-  for (const text of ['Visit https://example.com/path', 'Use foo/bar', '// comment']) {
-    test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field] });
+  const requestField = vm.runInContext('requestField', test.context);
+  for (const text of [
+    'Visit https://example.com/path',
+    'Use foo/bar',
+    '// comment',
+    'See /etc/hosts',
+    'Check /api/draft',
+    'Edit /usr/local/bin/node',
+    'Ratio 1 / 2 is fine.',
+  ]) {
+    test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field, requestField] });
+    assert.equal(test.context.slashRequest(test.view.state), null, text);
+    assert.equal(test.view.state.field(requestField).size, 0, text);
     assert.equal(test.context.handleWrite(test.view), false, text);
   }
-  const text = 'Existing text. /Explain /usr/bin';
-  test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field] });
-  assert.equal(test.context.slashRequest(test.view.state).instruction, 'Explain /usr/bin');
+  for (const [text, expected] of [
+    ['/explain /usr/bin', 'explain /usr/bin'],
+    ['Existing text. /Explain /usr/bin', 'Explain /usr/bin'],
+  ]) {
+    test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field, requestField] });
+    assert.equal(test.context.slashRequest(test.view.state).instruction, expected, text);
+  }
+  // Explicitly typing "/" after a path still starts an inline command via typedSlash.
+  const base = 'See /etc/hosts ';
+  let state = EditorState.create({ doc: base, selection: { anchor: base.length }, extensions: [test.field, requestField] });
+  assert.equal(test.context.slashRequest(state), null);
+  state = state.update({ changes: { from: base.length, insert: '/' }, selection: { anchor: base.length + 1 }, userEvent: 'input.type' }).state;
+  state = state.update({ changes: { from: base.length + 1, insert: 'explain it' }, selection: { anchor: base.length + 11 }, userEvent: 'input.type' }).state;
+  assert.equal(test.context.slashRequest(state).from, base.length);
+  assert.equal(test.context.slashRequest(state).instruction, 'explain it');
 }
+
+// Try again callback on /write error retries when the request line is intact and skips if edited.
+{
+  const test = setup();
+  const retries = [];
+  test.context.notifyProblem = (problem, action) => { test.notices.push(problem.say); retries.push(action); };
+  const okFetch = test.context.fetch;
+  test.context.fetch = async (url, options) => {
+    test.requests.push({ url, body: JSON.parse(options.body), signal: options.signal });
+    return { ok: false, status: 502, json: async () => ({ error: 'HTTP 502' }) };
+  };
+  await test.run();
+  assert.equal(typeof retries[0], 'function', '/write failure must provide a retry callback');
+  assert.equal(test.view.state.field(test.field), null);
+
+  test.context.fetch = okFetch;
+  await retries[0]();
+  assert.equal(test.requests.length, 2);
+  assert.equal(test.view.state.field(test.field).phase, 'review');
+  assert.equal(test.view.state.field(test.field).text, 'A quiet garden.');
+
+  // If the request line changed before clicking Try again, retry must not fire.
+  const testEdited = setup();
+  const editedRetries = [];
+  testEdited.context.notifyProblem = (problem, action) => { testEdited.notices.push(problem.say); editedRetries.push(action); };
+  testEdited.context.fetch = async (url, options) => {
+    testEdited.requests.push({ url, body: JSON.parse(options.body), signal: options.signal });
+    return { ok: false, status: 502, json: async () => ({ error: 'HTTP 502' }) };
+  };
+  await testEdited.run();
+  assert.equal(typeof editedRetries[0], 'function');
+  const slashPos = draft.indexOf('/Describe');
+  testEdited.view.dispatch({ changes: { from: slashPos + 1, to: slashPos + 9, insert: 'Changed' } });
+  await editedRetries[0]();
+  assert.equal(testEdited.requests.length, 1, 'retry must not fire after the request line changed');
+}
+
+// Leading horizontal indentation is preserved during streaming and upon acceptance.
+{
+  const test = setup();
+  const seen = [];
+  test.context.sseChunks = async function* () {
+    yield { text: '\n  - nested ' };
+    seen.push(test.view.state.field(test.field).text);
+    yield { text: 'item\n' };
+  };
+  await test.run();
+  assert.equal(test.view.state.field(test.field).text, '  - nested item');
+  test.review('Accept');
+  assert.equal(test.view.state.doc.toString(), 'Opening.\n\n  - nested item\n\nEnding.');
+}
+
+// The editor says so when it stops a generation because the draft changed.
+assert.match(appSection('EditorView.updateListener.of(update => {\n        if (passage.job()', 'if (update.selectionSet && !update.docChanged) for (const ui of chatEditCards'),
+  /generate\.job\(\)\.signal\.aborted\) notify\('Generation stopped because the draft changed/);
+
+assert(fs.readFileSync(new URL('../src/features/generate.js', import.meta.url), 'utf8').includes('if (chunk.notice) { notify(chunk.notice); continue; }'),
+  'the editor shows a server notice from the /write stream');
+
 console.log('Generation checks passed: inline slash requests, R regeneration, concurrent edits, review and Undo.');

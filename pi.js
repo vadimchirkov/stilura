@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
-import { connectMcp } from './mcp.js';
+import { connectMcp, mcpConfigured } from './mcp.js';
 import { CLAUDE_CODE, askClaudeCode, claudeCodeStatus, claudeModels } from './claude-code.js';
+import { ANTIGRAVITY, askAntigravity, antigravityStatus } from './antigravity.js';
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 // Named models first. A router picks a different model per request, so the same
@@ -69,9 +71,34 @@ export function nextOfferedModel(provider, id) {
   return next ? { provider, id: next } : null;
 }
 
-export async function getAgentStatus() {
+// Parallel callers (UI, extension popup, credential saves) share one build.
+const statusInflight = new Map();
+export function getAgentStatus({ force = false } = {}) {
+  if (!statusInflight.has(force)) {
+    const build = buildAgentStatus({ force }).finally(() => { if (statusInflight.get(force) === build) statusInflight.delete(force); });
+    statusInflight.set(force, build);
+  }
+  return statusInflight.get(force);
+}
+
+// What the Claude Code and Antigravity subscriptions add to the model list.
+function externalAgents(claudeCode, antigravity) {
+  const agy = antigravity.loggedIn && antigravity.models.length > 0;
+  return {
+    models: [...(claudeCode.plan ? claudeModels : []), ...(agy ? antigravity.models : [])],
+    providers: [
+      ...(claudeCode.plan ? [{ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max' }] : []),
+      ...(agy ? [{ id: ANTIGRAVITY, name: 'Antigravity' }] : []),
+    ],
+    defaultSelection: claudeCode.plan ? { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' }
+      : agy ? { provider: ANTIGRAVITY, model: antigravity.models[0].model, thinkingLevel: 'off' }
+      : undefined,
+  };
+}
+
+async function buildAgentStatus({ force }) {
   try {
-    const [rt, claudeCode] = await Promise.all([runtime(), claudeCodeStatus()]);
+    const [rt, claudeCode, antigravity] = await Promise.all([runtime(), claudeCodeStatus({ force }), antigravityStatus({ force })]);
     const available = (await rt.getAvailable()).filter(offered);
     const unique = [...new Map(available.map(model => [`${model.provider}\0${model.id}`, model])).values()];
     const models = unique.map(model => ({
@@ -84,7 +111,6 @@ export async function getAgentStatus() {
     const providers = [...new Set(models.map(model => model.provider))].map(id => ({
       id,
       name: rt.getProvider(id)?.name ?? id,
-      models: models.filter(model => model.provider === id),
     }));
     const authProviders = rt.getProviders()
       .filter(provider => provider.auth.apiKey?.login)
@@ -104,22 +130,37 @@ export async function getAgentStatus() {
     const selected = configured
       ?? FALLBACK_MODELS.map(([provider, id]) => unique.find(model => model.provider === provider && model.id === id)).find(Boolean)
       ?? unique[0];
-    if (claudeCode.plan) {
-      models.push(...claudeModels);
-      providers.push({ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max', models: claudeModels });
-    }
+    const external = externalAgents(claudeCode, antigravity);
+    models.push(...external.models);
+    providers.push(...external.providers);
+    const defaultSelection = selected ? selectionFor(selected) : external.defaultSelection;
     return {
       claudeCode,
+      antigravity,
       available: models.length > 0,
-      ...(selected ? { defaultSelection: selectionFor(selected) } : claudeCode.plan
-        ? { defaultSelection: { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' } } : {}),
+      ...(defaultSelection ? { defaultSelection } : {}),
       providers,
       models,
       authProviders,
       ...(rt.getError() ? { error: rt.getError() } : {}),
     };
   } catch (error) {
-    return { available: false, providers: [], models: [], authProviders: [], error: error.message };
+    const [claudeCode, antigravity] = await Promise.all([
+      claudeCodeStatus({ force }).catch(() => ({
+        installed: false, claudeInstalled: false, adapterInstalled: false, plan: null,
+      })),
+      antigravityStatus({ force }).catch(() => ({
+        installed: false, loggedIn: false, tier: null, models: [],
+      })),
+    ]);
+    const { models, providers, defaultSelection } = externalAgents(claudeCode, antigravity);
+    return {
+      claudeCode,
+      antigravity,
+      available: models.length > 0,
+      ...(defaultSelection ? { defaultSelection } : {}),
+      providers, models, authProviders: [], error: error.message,
+    };
   }
 }
 
@@ -129,12 +170,14 @@ export async function saveProviderApiKey(providerId, apiKey) {
   if (!provider?.auth.apiKey?.login) throw new Error(`Provider ${providerId} does not support API-key login`);
   if (!apiKey.trim() || apiKey.length > 10_000) throw new Error('API key is empty or too long');
   await rt.login(providerId, 'api_key', { prompt: async () => apiKey.trim(), notify: () => {} });
+  statusInflight.clear();
 }
 
 export async function removeProviderApiKey(providerId) {
   const rt = await runtime();
   if (!rt.getProvider(providerId)) throw new Error(`Unknown provider ${providerId}`);
   await rt.logout(providerId);
+  statusInflight.clear();
 }
 
 // ─── Subscription sign-in (OAuth) ──────────────────────────────────────────
@@ -151,8 +194,33 @@ export async function removeProviderApiKey(providerId) {
 // small endpoints; the login itself runs in the background.
 const OAUTH_PROVIDERS = ['openai-codex'];
 const OAUTH_METHODS = ['browser', 'device_code'];
+const OAUTH_TTL = 10 * 60_000;
 
 let oauthSession = null;
+
+function clearOAuthTimer(session) {
+  if (!session?.timer) return;
+  clearTimeout(session.timer);
+  session.timer = null;
+}
+
+function expireOAuth(session) {
+  if (!session || session.step === 'done' || session.step === 'error') return;
+  clearOAuthTimer(session);
+  session.timedOut = true;
+  session.step = 'error';
+  session.error = 'Sign-in timed out';
+  session.controller.abort();
+  session.resolveManual?.reject(new Error('Sign-in timed out'));
+  session.resolveManual = null;
+}
+
+function sweepExpiredOAuth() {
+  if (oauthSession && oauthSession.step !== 'done' && oauthSession.step !== 'error'
+    && Date.now() - oauthSession.startedAt >= oauthSession.ttl) {
+    expireOAuth(oauthSession);
+  }
+}
 
 const oauthSnapshot = session => !session ? null : {
   provider: session.provider,
@@ -167,6 +235,7 @@ const oauthSnapshot = session => !session ? null : {
 const oauthError = (status, message) => Object.assign(new Error(message), { status });
 
 export async function getOAuthStatus() {
+  sweepExpiredOAuth();
   const rt = await runtime();
   const supported = [];
   for (const id of OAUTH_PROVIDERS) {
@@ -188,18 +257,24 @@ export async function getOAuthStatus() {
   return { supported, active: oauthSnapshot(oauthSession) };
 }
 
-export async function startOAuth(providerId, method = 'browser') {
+export async function startOAuth(providerId, method = 'browser', { ttl = OAUTH_TTL } = {}) {
   if (!OAUTH_PROVIDERS.includes(providerId)) {
     throw oauthError(400, providerId === 'anthropic'
       ? 'Claude Pro/Max sign-in is not offered: Anthropic restricts subscription tokens to Claude Code and claude.ai.'
       : `Sign-in is not offered for provider ${providerId}`);
   }
   if (!OAUTH_METHODS.includes(method)) throw oauthError(400, `Unknown sign-in method ${method}`);
+  sweepExpiredOAuth();
   if (oauthSession && oauthSession.step !== 'done' && oauthSession.step !== 'error') {
     throw oauthError(409, 'A sign-in is already in progress');
   }
   const controller = new AbortController();
-  const session = oauthSession = { provider: providerId, method, step: 'starting', controller, resolveManual: null };
+  const session = oauthSession = {
+    provider: providerId, method, step: 'starting', controller, resolveManual: null,
+    startedAt: Date.now(), ttl, timedOut: false, timer: null,
+  };
+  session.timer = setTimeout(() => expireOAuth(session), ttl);
+  session.timer.unref?.();
   const interaction = {
     signal: controller.signal,
     prompt: async request => {
@@ -229,8 +304,11 @@ export async function startOAuth(providerId, method = 'browser') {
     } catch (error) {
       if (oauthSession !== session) return;
       session.step = 'error';
-      session.error = controller.signal.aborted ? 'Sign-in cancelled' : (error?.message || String(error));
+      session.error = session.timedOut ? 'Sign-in timed out'
+        : controller.signal.aborted ? 'Sign-in cancelled'
+        : (error?.message || String(error));
     } finally {
+      clearOAuthTimer(session);
       session.resolveManual = null;
     }
   })();
@@ -244,6 +322,7 @@ export async function startOAuth(providerId, method = 'browser') {
 }
 
 export async function submitOAuthCode(code) {
+  sweepExpiredOAuth();
   const text = String(code ?? '').trim();
   if (!text || text.length > 10_000) throw oauthError(400, 'Pasted code is empty or too long');
   const session = oauthSession;
@@ -254,8 +333,10 @@ export async function submitOAuthCode(code) {
 }
 
 export async function cancelOAuth() {
+  sweepExpiredOAuth();
   const session = oauthSession;
   if (!session || session.step === 'done' || session.step === 'error') return { active: oauthSnapshot(session) };
+  clearOAuthTimer(session);
   session.controller.abort();
   session.resolveManual?.reject(new Error('Sign-in cancelled'));
   session.resolveManual = null;
@@ -306,6 +387,12 @@ const request = (systemPrompt, userPrompt, history) => ({
       : { role: message.role, content: message.content, timestamp: Date.now() }),
 });
 
+// One prompt-cache session per document, so two open drafts do not evict each
+// other's cached prefix. The id is hashed: it is a file name from the client.
+export const suggestSessionId = documentId => documentId
+  ? `stilura-suggest:${createHash('sha256').update(documentId).digest('hex').slice(0, 16)}`
+  : 'stilura-suggest';
+
 const options = (selection, maxTokens, signal) => ({
   maxTokens,
   signal,
@@ -320,59 +407,90 @@ const mandatoryReasoning = response => /reasoning is mandatory/i.test(response.e
 // A ChatGPT plan that does not serve the model (see OAUTH_MODELS).
 const notSupported = message => /model is not supported when using Codex with a ChatGPT account/i.test(message ?? '');
 
-export async function completeText({ systemPrompt, userPrompt, selection, maxTokens = 1500, signal, continuation = false }) {
+export async function completeText({ systemPrompt, userPrompt, selection, maxTokens = 1500, signal, continuation = false, documentId }) {
   if (selection?.provider === CLAUDE_CODE) return askClaudeCode({ systemPrompt, userPrompt, model: selection.model, signal });
+  if (selection?.provider === ANTIGRAVITY) return askAntigravity({ systemPrompt, userPrompt, model: selection.model, signal });
   const resolved = await resolveModel(selection);
   const modelKey = `${resolved.model.provider}/${resolved.model.id}`;
   // Typing suggestions need the least reasoning the model supports, regardless
   // of the default model settings. Mandatory-reasoning models need headroom.
-  const ask = async level => {
+  const ask = async (level, scale = 1) => {
     const effectiveSelection = continuation ? selectionFor(resolved.model, level) : resolved.selection;
-    const budget = continuation ? (effectiveSelection.thinkingLevel === 'off' ? 256 : 2048) : maxTokens;
+    const wanted = (continuation ? (effectiveSelection.thinkingLevel === 'off' ? 256 : 2048) : maxTokens) * scale;
+    const budget = Math.min(wanted, resolved.model.maxTokens ?? wanted);
     // The session key routes OpenAI-style providers to a warm prompt cache:
     // measured on a long draft, 86% of input cached and ~1.6 s → ~1.0 s.
     return resolved.rt.completeSimple(resolved.model, request(systemPrompt, userPrompt),
-      { ...options(effectiveSelection, budget, signal), ...(continuation ? { sessionId: 'stilura-suggest' } : {}) });
+      { ...options(effectiveSelection, budget, signal), ...(continuation ? { sessionId: suggestSessionId(documentId) } : {}) });
   };
-  let response = await ask(reasoningRequired.has(modelKey) ? 'minimal' : 'off');
+  let level = reasoningRequired.has(modelKey) ? 'minimal' : 'off';
+  let response = await ask(level);
   if (continuation && !reasoningRequired.has(modelKey) && response.stopReason === 'error' && mandatoryReasoning(response)) {
     reasoningRequired.add(modelKey);
-    response = await ask('minimal');
+    response = await ask(level = 'minimal');
   }
   if (response.stopReason === 'error' && notSupported(response.errorMessage)) {
     const next = nextOfferedModel(resolved.model.provider, resolved.model.id);
-    if (next) return completeText({ systemPrompt, userPrompt, selection: { ...resolved.selection, model: next.id }, maxTokens, signal, continuation });
+    if (next) return completeText({ systemPrompt, userPrompt, selection: { ...resolved.selection, model: next.id }, maxTokens, signal, continuation, documentId });
   }
   if (response.stopReason === 'error' || response.stopReason === 'aborted') {
     throw new Error(response.errorMessage ?? 'Pi request failed');
   }
-  const text = response.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('').trim();
-  if (response.stopReason === 'length') {
-    if (!continuation) throw new Error('Model output was truncated. Try a smaller passage or less reasoning.');
-    // Only continuations may use partial output. Drop the potentially cut word;
-    // a reasoning-only response or a single cut token offers nothing to accept.
+  const textOf = response => response.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('').trim();
+  // Only continuations may use partial output. Drop the potentially cut word.
+  const prefixOf = text => {
     const boundary = text.search(/\s+\S*$/u);
     return boundary < 0 ? '' : text.slice(0, boundary).trimEnd();
+  };
+  let text = textOf(response);
+  if (response.stopReason === 'length') {
+    if (!continuation) throw new Error('Model output was truncated. Try a smaller passage or less reasoning.');
+    let prefix = prefixOf(text);
+    // A short TEXT:/WORD: answer cut at its only word, or a reasoning-only
+    // response, leaves nothing to accept: retry once with a larger budget.
+    if (!prefix.replace(/^(?:TEXT|WORD):?/i, '').trim()) {
+      response = await ask(level, 4);
+      if (response.stopReason === 'error' || response.stopReason === 'aborted') throw new Error(response.errorMessage ?? 'Pi request failed');
+      text = textOf(response);
+      prefix = response.stopReason === 'length' ? prefixOf(text) : text;
+    }
+    return prefix;
   }
   return text;
 }
 
-export async function streamText({ systemPrompt, userPrompt, messages, selection, maxTokens = 2000, signal, onText, mcp = false, onReset = () => {} }) {
+export async function streamText({ systemPrompt, userPrompt, messages, selection, maxTokens = 2000, signal, onText, mcp = false, onReset = () => {}, onNotice = () => {} }) {
+  // Agent sessions run their own tools; Stilura's MCP servers are not offered to them.
+  if (mcp && [CLAUDE_CODE, ANTIGRAVITY].includes(selection?.provider) && mcpConfigured()) {
+    onNotice(`Your MCP servers are not used with ${selection.provider === CLAUDE_CODE ? 'Claude Code' : 'Antigravity'}. Pick another model in Settings to use them.`);
+  }
   if (selection?.provider === CLAUDE_CODE) {
     await askClaudeCode({ systemPrompt, userPrompt, messages, model: selection.model, signal, onText });
     return;
   }
+  if (selection?.provider === ANTIGRAVITY) {
+    await askAntigravity({ systemPrompt, userPrompt, messages, model: selection.model, signal, onText });
+    return;
+  }
   const resolved = await resolveModel(selection);
+  const modelKey = `${resolved.model.provider}/${resolved.model.id}`;
+  const effectiveSelection = reasoningRequired.has(modelKey) && resolved.selection.thinkingLevel === 'off'
+    ? selectionFor(resolved.model, 'minimal')
+    : resolved.selection;
   const connection = mcp ? await connectMcp(signal) : null;
   const context = request(connection ? `${systemPrompt}\n\n${connection.instructions}` : systemPrompt, userPrompt, messages);
   if (connection) context.tools = connection.tools;
   for (let step = 0; step < 12; step++) {
     signal?.throwIfAborted();
-    const stream = resolved.rt.streamSimple(resolved.model, context, options(resolved.selection, maxTokens, signal));
+    const stream = resolved.rt.streamSimple(resolved.model, context, options(effectiveSelection, maxTokens, signal));
     let answer, wrote = false;
     for await (const event of stream) {
       if (event.type === 'text_delta') { wrote = true; onText(event.delta); }
       if (event.type === 'error') {
+        if (!wrote && step === 0 && !reasoningRequired.has(modelKey) && mandatoryReasoning(event.error)) {
+          reasoningRequired.add(modelKey);
+          return streamText({ systemPrompt, userPrompt, messages, selection: selectionFor(resolved.model, 'minimal'), maxTokens, signal, onText, mcp, onReset });
+        }
         // A refusal arrives before any text, so the next model can answer
         // the same request without the writer seeing the failure.
         const next = !wrote && step === 0 && notSupported(event.error.errorMessage)

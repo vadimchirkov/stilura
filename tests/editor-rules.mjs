@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { reviewAction, rewriteInstruction, slashCommand } from '../extension/writing-rules.js';
+import { armedSurvives, passageShortcut, reviewAction, rewriteInstruction, slashCommand } from '../extension/writing-rules.js';
 
 for (const [event, count, expected] of [
   [{ key: 'Tab' }, 1, 'Accept'],
@@ -34,11 +34,44 @@ for (const [line, from, instruction] of [
   ['Pick one and / or the other /summarize', 28, 'summarize'],
   ['/compare A / B', 0, 'compare A / B'],
   ['Intro /compare A / B', 6, 'compare A / B'],
+  ['/explain /usr/bin', 0, 'explain /usr/bin'],
   ['Existing text. /Explain /usr/bin', 15, 'Explain /usr/bin'],
+  ['See /etc/hosts and /write a summary', 19, 'write a summary'],
 ]) {
   const command = slashCommand(line);
   assert.equal(command?.from, from, line);
   assert.equal(command.instruction, instruction, line);
   assert.equal(command.text, line.slice(from), line);
 }
-assert.equal(slashCommand('See https://example.com and/or // note'), null);
+for (const prose of [
+  'See https://example.com and/or // note',
+  'See /etc/hosts',
+  'Check /api/draft',
+  'Edit /usr/local/bin/node',
+  '/etc/hosts',
+  'Ratio 1 / 2 is fine.',
+  'Pick one and / or the other.',
+]) {
+  assert.equal(slashCommand(prose), null, prose);
+}
+
+// Fixing a typo inside a typed command keeps it armed; leaving its line or removing the slash does not.
+{
+  const doc = 'Intro\n/wrte a haiku';
+  assert(armedSurvives(6, doc, 9), 'caret moved left inside the command');
+  assert(armedSurvives(6, doc, doc.length), 'caret at the end');
+  assert(!armedSurvives(6, doc, 3), 'caret before the slash');
+  assert(!armedSurvives(6, 'Intro\nwrte a haiku', 9), 'slash deleted');
+  assert(!armedSurvives(6, doc + '\nnext', doc.length + 3), 'caret on a later line');
+}
+
+// Cmd/Ctrl+K only, without other modifiers or during composition.
+for (const [event, expected] of [
+  [{ key: 'k', metaKey: true }, true],
+  [{ key: 'K', ctrlKey: true }, true],
+  [{ key: 'k' }, false],
+  [{ key: 'k', metaKey: true, shiftKey: true }, false],
+  [{ key: 'k', ctrlKey: true, altKey: true }, false],
+  [{ key: 'k', metaKey: true, isComposing: true }, false],
+  [{ key: 'j', metaKey: true }, false],
+]) assert.equal(!!passageShortcut(event), expected, JSON.stringify(event));

@@ -33,6 +33,15 @@ const sleeper = async () => {
   return child;
 };
 
+// ── Missing draft folder ──
+// DRAFT_FILE=./sub/draft.md used to throw ENOENT; the folder is created.
+{
+  const file = path.join(directory, 'new', 'nested', 'draft.md');
+  const store = documentStore(file);
+  assert(fs.statSync(path.dirname(file)).isDirectory());
+  assert.equal(store.read().path, path.join(fs.realpathSync(path.dirname(file)), 'draft.md'));
+}
+
 // ── Unreadable notes ──
 // A note file with a broken byte kept the session from opening, so the draft
 // could not be edited in the app at all. The text is intact; the notes are
@@ -116,6 +125,49 @@ const sleeper = async () => {
     await assert.rejects(() => sessions.getVerified(file), error => error.status === 409);
     assert.equal(fs.existsSync(sessionFile(file)), true, 'a live claim is kept');
   } finally { sessions.close(); server.close(); child.kill(); }
+}
+
+// POST /draft/open verifies a stale claim with a reused live pid and takes over the session.
+{
+  const mainFile = draft('Main.\n');
+  const sideFile = draft('Sidebar draft.\n');
+  const child = await sleeper();
+  const port = await closedPort();
+  fs.writeFileSync(sessionFile(sideFile), JSON.stringify({
+    pid: child.pid, url: `http://127.0.0.1:${port}/draft/live?name=${path.basename(sideFile)}`, token: 'stale',
+  }));
+  const serverChild = spawn(process.execPath, [path.resolve(import.meta.dirname, '..', 'index.js')], {
+    cwd: directory,
+    env: { ...process.env, PORT: '0', DRAFT_FILE: mainFile, STILURA_NO_OPEN: '1', STILURA_OFFLINE_MODELS: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  serverChild.stderr.on('data', chunk => { output += chunk; });
+  try {
+    const baseUrl = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Server did not start: ' + output)), 20_000);
+      serverChild.stdout.on('data', chunk => {
+        output += chunk;
+        const match = output.match(/Stilura → (http:\/\/127\.0\.0\.1:\d+)/);
+        if (match) { clearTimeout(timer); resolve(match[1]); }
+      });
+      serverChild.once('exit', code => { clearTimeout(timer); reject(new Error(`Server exited ${code}: ${output}`)); });
+    });
+    const res = await fetch(baseUrl + '/draft/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: path.basename(sideFile) }),
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(res.status, 200, 'POST /draft/open must recover from a stale session claim');
+    assert.equal((await res.json()).text, 'Sidebar draft.\n');
+    const claim = readSessionAddress(sideFile);
+    assert.equal(claim?.pid, serverChild.pid, 'the server must claim the recovered session');
+  } finally {
+    serverChild.kill('SIGTERM');
+    if (serverChild.exitCode === null) await once(serverChild, 'exit');
+    child.kill();
+  }
 }
 
 // ── Stale lock ──

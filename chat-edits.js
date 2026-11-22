@@ -20,6 +20,18 @@ multiple suggestions remain choices for the author.
 The envelope is application data: never put it in a Markdown code fence or discuss its syntax.
 `;
 
+export const PASSAGE_EDITS_PROMPT = `
+Answer the author's question briefly. When proposing concrete replacements for the selected passage,
+put the actual wording in a final structured envelope, not in a second copy in your prose. End with exactly:
+<stilura-edits>[{"label":"Short edit title","quote":"Exact SELECTED TEXT","replacement":"Complete replacement"}]</stilura-edits>
+Use valid JSON with escaped quotes and newlines. Give one replacement, or up to three when alternatives are requested.
+Every edit's "quote" MUST equal the exact entire SELECTED TEXT character for character — never edit or quote text outside SELECTED TEXT.
+Preserve the author's facts, surrounding text, and grammatical fit; do not invent evidence, decisions or details.
+For explanations or questions that need no replacement, use an empty array or omit the envelope.
+Never claim an edit has already been applied.
+The envelope is application data: never put it in a Markdown code fence or discuss its syntax.
+`;
+
 // Models sometimes drop the tags and end with the bare JSON list (or a
 // "Proposed edits:" line before it). Same envelope, missing its wrapper —
 // never shown to the writer as text.

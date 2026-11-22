@@ -112,7 +112,7 @@ export function resolveDrift(local, disk, lastDisk) {
 // text with a gap, so the words stay readable under it; below the text when the
 // header leaves no room above; pinned inside when the pane is narrower than the
 // bubble. `side` says which, so the entrance can come from the text.
-export const BUBBLE_GAP = 8;
+const BUBBLE_GAP = 8;
 export function clampBubble(x, top, size, area, bottom = top) {
   const width = Math.min(size.w, area.right - area.left);
   const left = Math.max(area.left, Math.min(x - width / 2, area.right - width));

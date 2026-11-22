@@ -1,5 +1,3 @@
-export const WORD_RE = /\p{L}[\p{L}\p{N}'’-]*/gu;
-
 export function isLatinScript(text) {
   const letters = text.match(/\p{L}/gu);
   if (!letters?.length) return true;
@@ -108,8 +106,10 @@ export function generationText(raw, complete = false) {
 }
 
 // Only remove verbatim context echoes. Short reused phrases remain valid prose.
-export function insertionText(before, text, after = '') {
-  text = trimOverlap(before, text.trim()).trimStart();
+export function insertionText(before, text, after = '', { preserveIndent = false } = {}) {
+  const cleaned = preserveIndent ? text.replace(/^(?:\r?\n)+|(?:\r?\n)+$/g, '').trimEnd() : text.trim();
+  const trimmed = trimOverlap(before, cleaned);
+  text = preserveIndent ? trimmed.replace(/^(?:\r?\n)+/g, '') : trimmed.trimStart();
   text = text.slice(0, boundaryOverlap(text, after).left).trimEnd();
   const tokens = proseTokens(text);
   const words = tokens.filter(token => /[\p{L}\p{N}]/u.test(token.value));

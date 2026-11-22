@@ -1,4 +1,4 @@
-import { chatEl } from '../dom.js';
+import { el } from '../dom.js';
 
 // ─── Quick switcher (Cmd/Ctrl+O) ───
 // Open any file in the folder by typing a few letters of its name; a name
@@ -7,7 +7,7 @@ import { chatEl } from '../dom.js';
 // Letters of the query in order inside the name. Consecutive letters and
 // letters at a word start score higher, so "dr" ranks "draft" above "order".
 // -1 when the query does not fit.
-export function fuzzyScore(query, text) {
+function fuzzyScore(query, text) {
   let at = 0, score = 0, last = -2;
   for (let i = 0; i < text.length && at < query.length; i++) {
     if (text[i] !== query[at]) continue;
@@ -20,7 +20,7 @@ export function fuzzyScore(query, text) {
 
 // Files for a query: names that fit, best first; then files whose text
 // preview contains it. An empty query lists every file, most recent first.
-export function rankFiles(files, query) {
+function rankFiles(files, query) {
   const q = query.trim().toLowerCase();
   if (!q) return [...files].sort((a, b) => String(b.mtime).localeCompare(String(a.mtime)));
   const scored = [];
@@ -41,14 +41,14 @@ export function newFileName(query) {
 }
 
 export function createSwitcher({ files, refresh, open, create }) {
-  const dialog = chatEl('dialog', 'switcher');
+  const dialog = el('dialog', 'switcher');
   dialog.setAttribute('aria-label', 'Open a file');
-  const input = chatEl('input', 'switcher-input');
+  const input = el('input', 'switcher-input');
   Object.assign(input, { type: 'search', placeholder: 'Open or create a file…', autocomplete: 'off', spellcheck: false });
   input.setAttribute('role', 'combobox');
   input.setAttribute('aria-controls', 'switcher-list');
   input.setAttribute('aria-expanded', 'true');
-  const list = chatEl('div', 'switcher-list');
+  const list = el('div', 'switcher-list');
   list.id = 'switcher-list';
   list.setAttribute('role', 'listbox');
   dialog.append(input, list);
@@ -64,17 +64,17 @@ export function createSwitcher({ files, refresh, open, create }) {
     if (name && !exact) rows.push({ label: `Create “${name}”`, detail: '', create: true, run: () => create(name) });
     active = Math.min(active, Math.max(rows.length - 1, 0));
     list.replaceChildren(...rows.map((row, index) => {
-      const item = chatEl('button', `switcher-item${row.create ? ' is-create' : ''}`);
+      const item = el('button', `switcher-item${row.create ? ' is-create' : ''}`);
       item.type = 'button';
       item.id = `switcher-item-${index}`;
       item.setAttribute('role', 'option');
       item.setAttribute('aria-selected', String(index === active));
-      item.append(chatEl('span', 'switcher-name', row.label));
-      if (row.detail) item.append(chatEl('span', 'switcher-detail', row.detail));
+      item.append(el('span', 'switcher-name', row.label));
+      if (row.detail) item.append(el('span', 'switcher-detail', row.detail));
       item.addEventListener('click', () => choose(index));
       return item;
     }));
-    if (!rows.length) list.append(chatEl('p', 'switcher-empty', 'No files here yet. Type a name to create one.'));
+    if (!rows.length) list.append(el('p', 'switcher-empty', 'No files here yet. Type a name to create one.'));
     if (rows.length) input.setAttribute('aria-activedescendant', `switcher-item-${active}`);
     else input.removeAttribute('aria-activedescendant');
   }

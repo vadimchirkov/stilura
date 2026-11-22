@@ -1,4 +1,4 @@
-import { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd } from '../../extension/writing-rules.js';
+import { SUGGEST_DELAY, SUGGEST_MIN } from '../../extension/writing-rules.js';
 import { ghostField, ghostShow, ghostClear } from '../editor/ghost.js';
 import { modelError } from '../notices.js';
 
@@ -13,7 +13,30 @@ import { modelError } from '../notices.js';
 export function atParagraphEnd(state) {
   const sel = state.selection.main;
   if (!sel.empty) return false;
-  return paragraphEnd(state.doc.toString(), sel.head);
+  const line = state.doc.lineAt(sel.head);
+  if (sel.head !== line.to) return false;
+  if (line.number === state.doc.lines) return true;
+  return !state.doc.line(line.number + 1).text.trim();
+}
+
+function hasEnoughText(doc, min) {
+  if (doc.length < min) return false;
+  let first = -1, pos = 0;
+  for (const iter = doc.iter(); !iter.next().done;) {
+    const idx = iter.value.search(/\S/u);
+    if (idx >= 0) { first = pos + idx; break; }
+    pos += iter.value.length;
+  }
+  if (first < 0 || doc.length - first < min) return false;
+  const CHUNK = 1024;
+  for (let end = doc.length; end > first; end -= CHUNK) {
+    const start = Math.max(first, end - CHUNK);
+    const slice = doc.sliceString(start, end);
+    for (let i = slice.length - 1; i >= 0; i--) {
+      if (/\S/u.test(slice[i])) return (start + i - first + 1) >= min;
+    }
+  }
+  return false;
 }
 
 export function createSuggest({
@@ -46,9 +69,9 @@ export function createSuggest({
     cancelSuggestion();
     if (paused() || !getView().hasFocus || hidden()) return;
     if (Date.now() < suggestPausedUntil) return;
-    const doc = getView().state.doc.toString();
-    if (doc.trim().length < SUGGEST_MIN) return;
-    if (!atParagraphEnd(getView().state)) return;
+    const state = getView().state;
+    if (!hasEnoughText(state.doc, SUGGEST_MIN)) return;
+    if (!atParagraphEnd(state)) return;
 
     suggestTimer = timers.setTimeout(suggestFetch, SUGGEST_DELAY);
   }
@@ -113,6 +136,7 @@ export function createSuggest({
           cursor:   pos,
           agent,
           manual,
+          name: docState.documentName || undefined,
           brief: brief || undefined,
         }),
         signal: job.signal,

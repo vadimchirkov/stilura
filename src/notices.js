@@ -1,4 +1,4 @@
-import { chatEl } from './dom.js';
+import { el } from './dom.js';
 import { hydrateIcons } from './icons.js';
 
 // A provider's failure arrives as a status code and its own JSON, and pasting
@@ -33,7 +33,30 @@ export function modelError(error) {
   if (claudeLimit) {
     return { say: `Claude session limit reached${claudeLimit[1] ? ` · resets ${claudeLimit[1]}` : '.'}`, act: 'retry', detail };
   }
-  const status = Number(/^(?:HTTP |Server error )?([45]\d\d)\b/.exec(detail)?.[1]);
+  const rawStatus = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599
+    ? error.status
+    : Number(
+      /^(?:HTTP |Server error )?([45]\d\d)\b/.exec(detail)?.[1]
+      ?? /\b(?:HTTP|status|code|error)\s*[:=]?\s*([45]\d\d)\b/i.exec(detail)?.[1]
+    );
+  const status = Number.isFinite(rawStatus) && rawStatus >= 400 && rawStatus <= 599 ? rawStatus : 0;
+  if (!status) {
+    if (/claude auth login|install claude code|could not start claude-agent-acp/i.test(detail)) {
+      return { say: 'Claude Code is not ready. Check its connection in Settings.', act: 'settings', tab: 'models', detail };
+    }
+    if (/agy acp --login|install antigravity|could not start antigravity/i.test(detail)) {
+      return { say: 'Antigravity is not ready. Check its connection in Settings.', act: 'settings', tab: 'models', detail };
+    }
+    if (/no authenticated pi model/i.test(detail)) {
+      return { say: 'No model is connected yet. Connect a provider in Settings.', act: 'settings', tab: 'models', detail };
+    }
+    if (/is not authenticated/i.test(detail)) {
+      return { say: 'This model is not connected. Sign in or pick another model.', act: 'settings', tab: 'models', detail };
+    }
+    if (/unknown (?:pi|claude code) model/i.test(detail)) {
+      return { say: 'This model is not available. Pick another model in Settings.', act: 'settings', tab: 'models', detail };
+    }
+  }
   // Providers say how long to wait ("try again in 14.16s"); that number is the
   // one useful thing in a rate-limit payload.
   const waitMatch = status === 429 ? /try again in (\d+(?:\.\d+)?)\s*(ms|s|m)\b/i.exec(detail) : null;
@@ -95,21 +118,21 @@ export function createNotices({ editFeedback, noticeLive, chatPanel, chatInput, 
     clearTimeout(noticeTimer);
     editFeedback.replaceChildren();
     if (icon) {
-      const badge = chatEl('span', 'ph notice-icon', '');
+      const badge = el('span', 'ph notice-icon', '');
       badge.dataset.icon = icon;
       badge.setAttribute('aria-hidden', 'true');
       editFeedback.append(badge);
     }
-    const message = chatEl('span', '', text);
+    const message = el('span', '', text);
     message.title = detail || text;
     editFeedback.append(message);
     if (action) {
-      const run = chatEl('button', 'edit-feedback-undo', label);
+      const run = el('button', 'edit-feedback-undo', label);
       run.type = 'button';
       run.addEventListener('click', () => { notify(''); action(); });
       editFeedback.append(run);
     }
-    const close = chatEl('button', 'edit-feedback-close', '×');
+    const close = el('button', 'edit-feedback-close', '×');
     close.type = 'button';
     close.setAttribute('aria-label', 'Hide notice');
     close.addEventListener('click', () => { notify(''); focusEditor(); });

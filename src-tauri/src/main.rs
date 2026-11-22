@@ -95,7 +95,7 @@ async fn start_server(app: &AppHandle, folder: &Path) -> Result<String, String> 
         return Err(format!("{} is missing from the app bundle", server_js.display()));
     }
 
-    let env = HashMap::<String, String>::from([
+    let mut env = HashMap::<String, String>::from([
         ("STILURA_SIDECAR".into(), "1".into()),
         ("STILURA_OFFLINE_MODELS".into(), "1".into()),
         // Port 0: the operating system hands out a free one, so a second copy
@@ -107,6 +107,32 @@ async fn start_server(app: &AppHandle, folder: &Path) -> Result<String, String> 
         ("DRAFT_FILE".into(), folder.join("draft.md").to_string_lossy().into_owned()),
         ("STYLE_FILE".into(), folder.join("style.md").to_string_lossy().into_owned()),
     ]);
+
+    #[cfg(unix)]
+    {
+        let current = std::env::var("PATH").unwrap_or_default();
+        let mut parts: Vec<String> = current
+            .split(':')
+            .filter(|dir| !dir.is_empty())
+            .map(String::from)
+            .collect();
+        let mut extras = vec![
+            "/opt/homebrew/bin".to_string(),
+            "/usr/local/bin".to_string(),
+        ];
+        if let Ok(home) = std::env::var("HOME") {
+            if !home.is_empty() {
+                extras.push(format!("{home}/.local/bin"));
+                extras.push(format!("{home}/.claude/local"));
+            }
+        }
+        for dir in extras {
+            if !parts.iter().any(|existing| existing == &dir) {
+                parts.push(dir);
+            }
+        }
+        env.insert("PATH".into(), parts.join(":"));
+    }
 
     let (mut rx, child) = app
         .shell()

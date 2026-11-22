@@ -184,14 +184,16 @@ The folder choice is one line of text in the app's config directory (`folder.txt
 ```text
 stilura/
 |- README.md, SPEC.md, CHANGELOG.md
-|- index.js             build step, HTTP server, routes, and prompts
+|- index.js             build step, HTTP server, request admission, draft/file/agent routes
+|- ai-routes.js         model-backed POST routes and their prompts
+|- http-util.js         static serving, JSON/gzip responses, request body parsing
 |- pi.js                Pi discovery, credentials, model resolution, requests
 |- claude-code.js       Claude Code through the local ACP adapter
 |- document-store.js    draft, history and notes files, locks
 |- live-session.js      shared document session, revisions, SSE
 |- session-client.js    HTTP client for the live session
 |- notes.js, work.js, tasks.js   margin notes and the agent work queue
-|- workspace-files.js   sidebar files: list, open, rename, trash
+|- workspace-files.js   sidebar files: resolve, list, rename, trash
 |- suggestions.js       continuation prompt and validation
 |- editing.js, chat-edits.js, text-change.js   verified replacements and edit envelopes
 |- brief.js             positioning brief steps and validation

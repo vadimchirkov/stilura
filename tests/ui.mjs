@@ -153,7 +153,7 @@ const section = appSection;
     const controller = new AbortController(), snapshots = [];
     let saved;
     const context = docContext({
-      document, workView, chatEl: node, chatEditCards: new Map(), chatRequests: new Set(),
+      document, workView, el: node, chatEditCards: new Map(), chatRequests: new Set(),
       chatHistory: [{ role: 'user', content: 'Tighten this.' }], chatAbort: null, changingChatEdit: null,
       loadingDocument: false, savePaused: false, plainPreview: null, positionBrief: null, EDITS_OPEN,
       locateChatEdits, mapChatEdit, chatEditMatches, chatVisibleText, renderMarkdown: text => text,
@@ -297,7 +297,7 @@ const section = appSection;
   const jobs = new Set();
   let briefs = 0, notice = '';
   const context = docContext({
-    document, chatInput: input, jobs, console, chatEl: node, icon: () => '',
+    document, chatInput: input, jobs, console, el: node, icon: () => '',
     chatResize() {}, clearNotice() {},
     startBrief() { briefs++; },
     notify(message) { notice = message; },
@@ -372,29 +372,29 @@ for (const bad of [null, [], questions.slice(1), questions.map(item => ({ ...ite
 
 // Exercise the actual route at the provider boundary, including the full draft and saved answers.
 {
-  const server = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8');
-  const route = server.slice(server.indexOf("if (url.pathname === '/brief')"), server.indexOf('// POST /idea'));
+  const server = fs.readFileSync(new URL('../ai-routes.js', import.meta.url), 'utf8');
+  const route = server.slice(server.indexOf('async function brief('), server.indexOf('async function passageHint('));
   let sent, result, raw = JSON.stringify(questions);
   const context = docContext({
-    BRIEF_STEPS, BRIEF_PROMPT, validateBriefQuestions, url: { pathname: '/brief' }, signal: new AbortController().signal, res: {},
+    BRIEF_STEPS, BRIEF_PROMPT, validateBriefQuestions, signal: new AbortController().signal, res: {},
     completeText: async request => { sent = request; return raw; },
     sendJson: (_res, status, payload) => { result = { status, payload }; },
   });
-  vm.runInContext(`async function requestBrief(body) { ${route} }`, context);
-  await context.requestBrief({ document: 'Рассказ о море.', answers: { reader: 'Дети' }, agent: { provider: 'fixture', model: 'test' } });
+  vm.runInContext(route, context);
+  await context.brief({ res: {}, signal: new AbortController().signal, body: { document: 'Рассказ о море.', answers: { reader: 'Дети' }, agent: { provider: 'fixture', model: 'test' } } });
   assert.equal(result.status, 200);
   assert.deepEqual(JSON.parse(sent.userPrompt), { draft: 'Рассказ о море.', answers: { reader: 'Дети' } });
   assert.equal(sent.systemPrompt, BRIEF_PROMPT);
   assert.equal(sent.selection.provider, 'fixture');
   for (raw of ['not JSON', '{}', JSON.stringify(questions.slice(1))]) {
-    await context.requestBrief({ document: 'Рассказ о море.' });
+    await context.brief({ res: {}, signal: new AbortController().signal, body: { document: 'Рассказ о море.' } });
     assert.equal(result.status, 502);
   }
   sent = null;
-  await context.requestBrief({ document: '' });
+  await context.brief({ res: {}, signal: new AbortController().signal, body: { document: '' } });
   assert.equal(result.status, 200);
   assert.equal(sent, null);
-  await context.requestBrief({ document: 'Text', answers: { unknown: 'x' } });
+  await context.brief({ res: {}, signal: new AbortController().signal, body: { document: 'Text', answers: { unknown: 'x' } } });
   assert.equal(result.status, 400);
 }
 
