@@ -151,6 +151,15 @@ try {
   const stream = await write.text();
   assert.match(stream, /The door closed/);
   assert.match(stream, /\[DONE\]/);
+  // A saved model the catalog no longer lists is "unavailable", not a first run.
+  await page.evaluate(() => localStorage.setItem('wa-agent', JSON.stringify({ provider: 'openai', model: 'gone-model', thinkingLevel: 'medium' })));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => document.getElementById('settings-dialog').open && !document.getElementById('model-unavailable').hidden);
+  assert.match(await page.$eval('#model-unavailable-text', node => node.textContent), /Saved model gone-model is unavailable/);
+  assert.equal(await page.$eval('#settings-dialog', node => node.dataset.guided ?? ''), '');
+  await page.click('#model-unavailable-pick');
+  assert.equal(await page.$eval('#settings-dialog', node => node.dataset.guided), 'true');
+  assert.equal(await visible('#model-unavailable'), false);
   assert.deepEqual(errors, []);
   console.log('Settings browser checks passed: first-run ChatGPT, unconnected provider key field, connect, remove, Claude Pro recheck, passage preview/accept and streamed generation.');
 } finally {

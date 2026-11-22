@@ -37,7 +37,7 @@ import { clearGhostFx, ghostField, ghostClear, ghostAccept } from './editor/ghos
 import { spellMarkerField, createSpelling } from './editor/spelling.js';
 import { combobox, setOptions, fieldValue } from './combobox.js';
 import { el } from './dom.js';
-import { safeJson } from './format.js';
+import { safeJson, unavailableSelection } from './format.js';
 import { limitSnapshots, pruneTabCopies, removeTabCopy, writeTabCopy } from './tab-copies.js';
 import { api } from './api.js';
 import { createDocumentState } from './document-state.js';
@@ -92,6 +92,7 @@ const connectKey    = document.getElementById('connect-key');
 const connectionLine = document.getElementById('connection-line');
 const settingsError = document.getElementById('settings-error');
 const modelHint     = document.getElementById('model-hint');
+const modelUnavailable = document.getElementById('model-unavailable');
 const chatStream    = document.getElementById('chat-stream');
 const chatInput     = document.getElementById('chat-input');
 const chatSendButton = document.getElementById('chat-send');
@@ -375,6 +376,9 @@ function renderModelSettings() {
     setOptions(thinkingEl, levels.map(level => ({ value: level, label: thinkingNames[level] ?? level })), draftSelection?.thinkingLevel);
     draftSelection = model ? { provider: model.provider, model: model.model, thinkingLevel: fieldValue(thinkingEl) } : null;
   }
+  const lost = !guided && !currentAgent() ? unavailableSelection(agentSelection, agentInfo.models) : null;
+  modelUnavailable.hidden = !lost;
+  if (lost) document.getElementById('model-unavailable-text').textContent = `Saved model ${lost.model} is unavailable right now.`;
   modelHint.textContent = !choices.length ? 'No providers found. Check that Pi is installed.'
     : provider && !connected && (provider.signin || provider.key) ? `Connect ${provider.name} to choose a model.`
     : connected && [claudeProvider, antigravityProvider].includes(provider.id) ? 'Typing suggestions are off with this provider: each one starts a slow agent session. Press Cmd/Ctrl+Enter to ask for one.'
@@ -575,14 +579,16 @@ showSettingsTab(settingsDialog.dataset.tab);
 // and leaves the tab the writer was last on. 'welcome' is the first-run way
 // in: the Model tab with the ChatGPT card focused.
 async function openSettings(tab) {
-  const welcome = tab === 'welcome';
-  if (typeof tab === 'string') showSettingsTab(welcome ? 'models' : tab);
+  // A saved model that is merely unavailable keeps its normal Settings; the
+  // first-run welcome is for writers who never connected anything.
+  const welcome = tab === 'welcome' && !unavailableSelection(agentSelection, agentInfo.models);
+  if (typeof tab === 'string') showSettingsTab(tab === 'welcome' ? 'models' : tab);
   settingsError.textContent = '';
   try { await refreshAgent(); } catch (error) { settingsError.textContent = error.message; }
   await refreshOAuth();
   draftSelection = currentAgent();
   draftProvider = null;
-  if (welcome || !draftSelection) {
+  if (welcome || (!draftSelection && !unavailableSelection(agentSelection, agentInfo.models))) {
     settingsDialog.dataset.guided = 'true';
     guidedStep = 1;
   } else {
@@ -1010,6 +1016,11 @@ apiService.addEventListener('click', () => {
   draftProvider = null;
   renderModelSettings();
   if (modelSetup === 'api') providerEl.focus();
+});
+document.getElementById('model-unavailable-pick').addEventListener('click', () => {
+  settingsDialog.dataset.guided = 'true';
+  guidedStep = 1;
+  renderModelSettings();
 });
 document.getElementById('guided-back')?.addEventListener('click', () => {
   guidedStep = 1;

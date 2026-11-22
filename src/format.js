@@ -24,3 +24,10 @@ export function timeAgo(iso) {
   if (seconds < 30 * 86400) return `${Math.floor(seconds / 86400)}d ago`;
   return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
+
+// The writer's saved model when the catalog no longer lists it (a provider
+// offline, a key removed): setup is not missing, the model is unavailable.
+export function unavailableSelection(selection, models) {
+  if (!selection?.provider || !selection.model) return null;
+  return models.some(item => item.provider === selection.provider && item.model === selection.model) ? null : selection;
+}
