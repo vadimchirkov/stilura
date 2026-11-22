@@ -402,4 +402,19 @@ assert.equal(commands.requests.length, 0, 'no generation was started');
   assert.equal(testEdited.requests.length, 1, 'retry must not fire after the request line changed');
 }
 
+// Leading horizontal indentation is preserved during streaming and upon acceptance.
+{
+  const test = setup();
+  const seen = [];
+  test.context.sseChunks = async function* () {
+    yield { text: '\n  - nested ' };
+    seen.push(test.view.state.field(test.field).text);
+    yield { text: 'item\n' };
+  };
+  await test.run();
+  assert.equal(test.view.state.field(test.field).text, '  - nested item');
+  test.review('Accept');
+  assert.equal(test.view.state.doc.toString(), 'Opening.\n\n  - nested item\n\nEnding.');
+}
+
 console.log('Generation checks passed: inline slash requests, R regeneration, concurrent edits, review and Undo.');

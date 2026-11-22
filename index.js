@@ -737,13 +737,14 @@ async function handleRequest(req, res) {
           'Connection':    'keep-alive',
         });
         let prompt = user;
+        let allowMcp = writing;
         const fingerprint = text => (text.match(/[\p{L}\p{N}\p{M}_]+/gu) ?? [text.trim()]).join(' ').toLowerCase();
         for (let attempt = 0; attempt < (writing ? 2 : 1); attempt++) {
           signal.throwIfAborted();
           let answer = '', shown = '', usedTools = false;
           await streamText({
             systemPrompt: system, userPrompt: prompt, selection: body.agent, signal,
-            mcp: writing,
+            mcp: allowMcp,
             onReset: () => {
               usedTools = true;
               answer = ''; shown = '';
@@ -759,20 +760,26 @@ async function handleRequest(req, res) {
           });
           signal.throwIfAborted();
           if (!writing) break;
-          let text = '', problem = '';
+          let text = '', problem = '', formatError = false;
           try {
-            text = insertionText((body.document ?? '').slice(0, body.from), generationText(answer, true), (body.document ?? '').slice(body.cursor));
-            problem = !text ? 'The model repeated text already in the draft or returned no new text.'
+            const generated = generationText(answer, true);
+            text = insertionText((body.document ?? '').slice(0, body.from), generated, (body.document ?? '').slice(body.cursor), { preserveIndent: true });
+            problem = !text.trim() ? 'The model repeated text already in the draft or returned no new text.'
               : body.previous && fingerprint(text) === fingerprint(body.previous) ? 'The model repeated the previous suggestion.' : '';
-          } catch (error) { problem = error.message; }
+          } catch (error) { problem = error.message; formatError = true; }
           if (!problem) {
             if (text !== shown) res.write(`data: ${JSON.stringify({ replace: text })}\n\n`);
             break;
           }
-          if (attempt === 1 || usedTools) throw new Error(problem);
+          if (attempt === 1 || (usedTools && !formatError)) throw new Error(problem);
           // Reset the same preview before one corrective attempt; never append two answers.
           res.write(`data: ${JSON.stringify({ replace: '' })}\n\n`);
-          prompt = `${user}\n\nDISCARDED ANSWER:\n${answer}\n\nCORRECTION: ${problem} Rewrite it with a different opening and sentence structure. Return only a new passage for the insertion, without repeating either side or the previous suggestion.`;
+          if (usedTools) {
+            allowMcp = false;
+            prompt = `${user}\n\nDISCARDED ANSWER:\n${answer}\n\nCORRECTION: ${problem} Wrap the finished passage from DISCARDED ANSWER inside <stilura-text> and </stilura-text> with no commentary or tool calls.`;
+          } else {
+            prompt = `${user}\n\nDISCARDED ANSWER:\n${answer}\n\nCORRECTION: ${problem} Rewrite it with a different opening and sentence structure. Return only a new passage for the insertion, without repeating either side or the previous suggestion.`;
+          }
         }
         res.write('data: [DONE]\n\n');
         res.end();

@@ -279,16 +279,17 @@ export function createGenerate({
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${res.status}`);
       }
+      const cleanGenerated = text => text.replace(/^(?:\r?\n)+|(?:\r?\n)+$/g, '').trimEnd();
       let answer = '';
       for await (const chunk of sseChunks(res)) {
         if (!current()) { job.abort(); return; }
         if (chunk.error) throw new Error(chunk.error);
         answer = typeof chunk.replace === 'string' ? chunk.replace : answer + (chunk.text ?? '');
-        view.dispatch({ effects: setGenerationFx.of({ ...view.state.field(generationField), text: answer.trim(), previousText: null }) });
+        view.dispatch({ effects: setGenerationFx.of({ ...view.state.field(generationField), text: cleanGenerated(answer), previousText: null }) });
       }
       if (!current()) return;
       if (!answer.trim()) throw new Error('The model returned no text.');
-      view.dispatch({ effects: [setGenerationFx.of({ ...view.state.field(generationField), text: answer.trim(), previousText: null, phase: 'review' }),
+      view.dispatch({ effects: [setGenerationFx.of({ ...view.state.field(generationField), text: cleanGenerated(answer), previousText: null, phase: 'review' }),
         EditorView.announce.of('Suggestion ready. Click or type to edit. Tab accepts, Escape dismisses, R regenerates.')] });
     } catch (error) {
       if (!job.signal.aborted) {

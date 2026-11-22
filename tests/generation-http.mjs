@@ -20,10 +20,26 @@ export async function completeText({ systemPrompt, userPrompt }) {
   if (userPrompt.includes('BROKEN_ENVELOPE')) return '<stilura-edits>[broken';
   return Buffer.from(JSON.stringify({ systemPrompt, userPrompt })).toString('base64');
 }
-export async function streamText({ systemPrompt, userPrompt, onText }) {
+export async function streamText({ systemPrompt, userPrompt, onText, mcp, onReset }) {
   const emit = onText;
   onText = text => emit('<stilura-text>' + text + '</stilura-text>');
   const corrected = userPrompt.includes('\n\nCORRECTION:');
+  if (userPrompt.includes('INDENT_STREAM')) {
+    emit('<stilura-text>\n  - nested item\n</stilura-text>');
+    return;
+  }
+  if (userPrompt.includes('MCP_FORMAT_RECOVERS')) {
+    if (!corrected) {
+      if (!mcp) throw new Error('Expected mcp: true on initial attempt');
+      onReset?.();
+      emit('Tool-backed answer.');
+      return;
+    }
+    if (mcp) throw new Error('Expected mcp: false on format-only retry after MCP');
+    if (!userPrompt.includes('DISCARDED ANSWER:')) throw new Error('Expected DISCARDED ANSWER in retry prompt');
+    onText('Tool-backed answer.');
+    return;
+  }
   if (userPrompt.includes('PREAMBLE_STREAM')) {
     for (const part of ['Вот другой вариант интро:\n\n<sti', 'lura-text>Настоящий ', 'текст.<', '/stilura-te', 'xt>\nHope this helps.']) emit(part);
     return;
@@ -94,6 +110,13 @@ try {
   const fixedFormat = await stream({ ...input, instruction: 'FORMAT_RECOVERS' });
   assert.equal(fixedFormat.filter(event => event.replace === '').length, 1);
   assert.equal(fixedFormat.at(-1), 'DONE');
+  const mcpRecovered = await stream({ ...input, instruction: 'MCP_FORMAT_RECOVERS' });
+  assert.equal(mcpRecovered.at(-2).text, 'Tool-backed answer.');
+  assert.equal(mcpRecovered.at(-1), 'DONE');
+  const indented = await stream({ ...input, instruction: 'INDENT_STREAM' });
+  const indentedFinal = indented.reduce((acc, ev) => ev === 'DONE' ? acc : typeof ev.replace === 'string' ? ev.replace : acc + (ev.text ?? ''), '');
+  assert.equal(indentedFinal, '  - nested item');
+  assert.equal(indented.at(-1), 'DONE');
   const invalidFormat = await stream({ ...input, instruction: 'INVALID_FORMAT' });
   assert.match(invalidFormat.at(-1).error, /invalid passage format/);
   assert.equal(invalidFormat.filter(event => event.text).length, 0, 'Invalid chat output must never reach a draft preview');
