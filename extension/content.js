@@ -1,7 +1,7 @@
 (async () => {
   if (document.documentElement.dataset.stiluraExtension) return;
   document.documentElement.dataset.stiluraExtension = '1';
-  const { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, ghostRemainder, distinctVariants, reviewAction, rewriteInstruction } = await import(chrome.runtime.getURL('writing-rules.js'));
+  const { SUGGEST_DELAY, SUGGEST_MIN, paragraphEnd, slashCommand, armedSurvives, ghostRemainder, distinctVariants, reviewAction, rewriteInstruction } = await import(chrome.runtime.getURL('writing-rules.js'));
   const { EDITOR_UI_CSS, createPassageInput } = await import(chrome.runtime.getURL('editor-ui.js'));
   let review = null, fallback = null, armed = null, dismissed = null, pausedUntil = 0;
   let config = {}, field = null, timer, scheduled = null, port = null, hintPort = null, target = null, actionType = '', suggestion = '', composing = false;
@@ -440,6 +440,7 @@
     cancel(); dismissed = null; field = next;
     const command = slash(now);
     if (event.isTrusted && command && ((event.inputType === 'insertText' && event.data === '/') || (oldArmed?.el === next && oldArmed.from === command.from))) armed = { el: next, from: command.from };
+    else if (event.isTrusted && !command && oldArmed?.el === next && now?.from === now.to && armedSurvives(oldArmed.from, now.document, now.from)) armed = oldArmed;
     toolbar();
     if (event.isTrusted && !event.isComposing) scheduleSuggestion();
   }, true);

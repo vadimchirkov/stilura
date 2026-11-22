@@ -371,6 +371,15 @@ try {
   assert.equal(await assistant.locator('.preview').innerText(), 'Partial fixture answer — completed discussion.');
   await plain.press('Tab');
   assert.equal(await plain.inputValue(), 'Partial fixture answer — completed discussion.');
+  await plain.fill('');
+  await plain.pressSequentially('/write a shrt story');
+  for (let i = 0; i < 8; i++) await plain.press('ArrowLeft');
+  await plain.pressSequentially('o');
+  await plain.press('End');
+  await plain.press('Enter');
+  await assistant.locator('.inline[data-phase="review"]').waitFor();
+  assert.equal(await plain.inputValue(), '/write a short story', 'a typo fixed inside a typed command keeps Enter armed');
+  await plain.press('Tab');
   await plain.fill('/a pasted command stays ordinary text');
   await plain.press('Enter');
   assert.equal(await plain.inputValue(), '/a pasted command stays ordinary text\n');

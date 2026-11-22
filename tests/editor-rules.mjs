@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { reviewAction, rewriteInstruction, slashCommand } from '../extension/writing-rules.js';
+import { armedSurvives, reviewAction, rewriteInstruction, slashCommand } from '../extension/writing-rules.js';
 
 for (const [event, count, expected] of [
   [{ key: 'Tab' }, 1, 'Accept'],
@@ -53,4 +53,14 @@ for (const prose of [
   'Pick one and / or the other.',
 ]) {
   assert.equal(slashCommand(prose), null, prose);
+}
+
+// Fixing a typo inside a typed command keeps it armed; leaving its line or removing the slash does not.
+{
+  const doc = 'Intro\n/wrte a haiku';
+  assert(armedSurvives(6, doc, 9), 'caret moved left inside the command');
+  assert(armedSurvives(6, doc, doc.length), 'caret at the end');
+  assert(!armedSurvives(6, doc, 3), 'caret before the slash');
+  assert(!armedSurvives(6, 'Intro\nwrte a haiku', 9), 'slash deleted');
+  assert(!armedSurvives(6, doc + '\nnext', doc.length + 3), 'caret on a later line');
 }

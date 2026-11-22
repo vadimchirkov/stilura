@@ -45,6 +45,12 @@ export function slashCommand(line, offset = 0) {
     instruction: line.slice(start + 1).trim(), inline: !!line.slice(0, start).trim() };
 }
 
+// An armed slash survives edits on its own line (a typo fix with the caret
+// left of the line end); Enter still re-checks the command at the line end.
+export function armedSurvives(from, document, caret) {
+  return document[from] === '/' && caret >= from && !document.slice(from, caret).includes('\n');
+}
+
 export function ghostRemainder(text, typed) {
   return typed && text.startsWith(typed) ? text.slice(typed.length) : null;
 }
