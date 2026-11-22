@@ -40,6 +40,8 @@ function migrateDraftFiles(file) {
 // recheck immediately before rename and retain the previous disk copy.
 export function documentStore(filename) {
   const resolved = path.resolve(filename);
+  // DRAFT_FILE=./notes/draft.md should work before ./notes exists.
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
   const file = fs.existsSync(resolved) ? fs.realpathSync(resolved) : path.join(fs.realpathSync(path.dirname(resolved)), path.basename(resolved));
   migrateDraftFiles(file);
   const historyDir = `${file}.stilura-history`;

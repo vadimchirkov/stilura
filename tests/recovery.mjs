@@ -33,6 +33,15 @@ const sleeper = async () => {
   return child;
 };
 
+// ── Missing draft folder ──
+// DRAFT_FILE=./sub/draft.md used to throw ENOENT; the folder is created.
+{
+  const file = path.join(directory, 'new', 'nested', 'draft.md');
+  const store = documentStore(file);
+  assert(fs.statSync(path.dirname(file)).isDirectory());
+  assert.equal(store.read().path, path.join(fs.realpathSync(path.dirname(file)), 'draft.md'));
+}
+
 // ── Unreadable notes ──
 // A note file with a broken byte kept the session from opening, so the draft
 // could not be edited in the app at all. The text is intact; the notes are
