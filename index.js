@@ -22,7 +22,7 @@ import { documentStore, MAX_DOCUMENT_BYTES } from './document-store.js';
 import { documentSessions } from './live-session.js';
 import { renameDocument, trashDocument, restoreDocument } from './workspace-files.js';
 import { requestSuggestion } from './suggestions.js';
-import { CHAT_EDITS_PROMPT, chatVisibleText, parseChatResponse } from './chat-edits.js';
+import { CHAT_EDITS_PROMPT, PASSAGE_EDITS_PROMPT, chatVisibleText, parseChatResponse } from './chat-edits.js';
 import { desktopBridge } from './desktop.js';
 import { BRIEF_STEPS, BRIEF_PROMPT, CHAT_BRIEF_PROMPT, briefUpdateAllowed, validateBriefQuestions } from './brief.js';
 
@@ -120,8 +120,7 @@ const DRAFT_FILE = process.env.DRAFT_FILE || path.join(CWD, 'draft.md');
 const sessions = documentSessions();
 // Verify the advertised owner before trusting it: a crashed server can leave
 // a session file whose pid now belongs to some other program.
-let draftStore;
-try { draftStore = await sessions.getVerified(DRAFT_FILE); }
+try { await sessions.getVerified(DRAFT_FILE); }
 catch (error) {
   if (error.status !== 409) throw error;
   console.error(`${error.message}\n  Close the other Stilura window, or delete ${DRAFT_FILE}.stilura-session if nothing is running.`);
@@ -152,7 +151,7 @@ function workspaceFile(name) {
 
 async function requestedDraft(url) {
   const name = url.searchParams.get('name');
-  if (name === null || name === path.basename(DRAFT_FILE)) return draftStore;
+  if (name === null || name === path.basename(DRAFT_FILE)) return sessions.getVerified(DRAFT_FILE);
   const file = workspaceFile(name);
   if (!file) throw Object.assign(new Error('Open a Markdown or text file by name.'), { status: 400 });
   return sessions.getVerified(file);
@@ -366,7 +365,7 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/agent/status') {
-    sendJson(res, 200, await getAgentStatus());
+    sendJson(res, 200, await getAgentStatus({ force: url.searchParams.get('refresh') === '1' }));
     return;
   }
 
@@ -583,7 +582,7 @@ async function handleRequest(req, res) {
         return;
       }
       if (Buffer.byteLength(text) > MAX_DOCUMENT_BYTES) { sendJson(res, 413, { error: 'File exceeds the 1 MB editing limit.' }); return; }
-      sendJson(res, 200, sessions.get(file).read());
+      sendJson(res, 200, (await sessions.getVerified(file)).read());
     } catch (error) {
       sendJson(res, error.status || 500, { error: fsErrorMessage(error) });
     }
@@ -616,7 +615,7 @@ async function handleRequest(req, res) {
     try { body = await readBody(req); }
     catch (error) { sendJson(res, error.status || 400, { error: error.message }); return; }
     body.signal = signal;
-    if ((body.document?.length ?? 0) > 60_000) return sendJson(res, 413, { error: 'AI actions support up to 60,000 characters per draft. Split the document into smaller drafts; editing and export remain available.' });
+    if (url.pathname !== '/suggest' && (body.document?.length ?? 0) > 60_000) return sendJson(res, 413, { error: 'AI actions support up to 60,000 characters per draft. Split the document into smaller drafts; editing and export remain available.' });
     if (['/rewrite', '/ask'].includes(url.pathname) && (typeof body.document !== 'string' || typeof body.selected !== 'string' || !body.selected || !Number.isInteger(body.from) || body.from < 0 || body.document.slice(body.from, body.from + body.selected.length) !== body.selected)) return sendJson(res, 400, { error: 'Selected text does not match the document range' });
 
     if (url.pathname === '/brief') {
@@ -668,20 +667,33 @@ async function handleRequest(req, res) {
         return sendJson(res, 400, { error: 'Select up to 10000 characters and enter a request of up to 4000 characters.' });
       }
       try {
-        const raw = await completeText({
-          systemPrompt: buildSystemPrompt('Help with the SELECTED TEXT according to the author’s request, in their language. ' +
-            'Answer questions briefly. When asked to rewrite, replace or find synonyms, propose wording that replaces ONLY the entire selected text. ' +
-            'Preserve surrounding text, facts and grammatical fit. Give one replacement, or up to three when alternatives are requested. ' +
-            'Do not claim the draft changed. ' + CHAT_EDITS_PROMPT),
-          userPrompt: `SELECTED TEXT:\n${body.selected}\n\nREQUEST:\n${body.instruction}\n\nDRAFT (context only):\n${markSelection(body.document, body.selected, body.from)}` +
-            (body.context ? `\n\nWRITING BRIEF:\n${body.context}` : ''),
-          selection: body.agent, signal, maxTokens: 4000,
-        });
-        const result = parseChatResponse(raw, body.document, { from: body.from, to: body.from + body.selected.length }, body.instruction);
-        if (result.edits.some(edit => edit.state !== 'pending' || edit.from !== body.from || edit.quote !== body.selected)) {
-          throw new Error('The replacement exceeded the selected passage. Try a more specific request.');
+        const systemPrompt = buildSystemPrompt('Help with the SELECTED TEXT according to the author’s request, in their language. ' +
+          'Answer questions briefly. When asked to rewrite, replace or find synonyms, propose wording that replaces ONLY the entire selected text. ' +
+          'Preserve surrounding text, facts and grammatical fit. Give one replacement, or up to three when alternatives are requested. ' +
+          'Do not claim the draft changed. ' + PASSAGE_EDITS_PROMPT);
+        const baseUserPrompt = `SELECTED TEXT:\n${body.selected}\n\nREQUEST:\n${body.instruction}\n\nDRAFT (context only):\n${markSelection(body.document, body.selected, body.from)}` +
+          (body.context ? `\n\nWRITING BRIEF:\n${body.context}` : '');
+        const selectionRange = { from: body.from, to: body.from + body.selected.length };
+        let userPrompt = baseUserPrompt;
+        let result;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          const raw = await completeText({
+            systemPrompt, userPrompt, selection: body.agent, signal, maxTokens: 4000,
+          });
+          try {
+            result = parseChatResponse(raw, body.document, selectionRange, body.instruction);
+            if (result.edits.some(edit => edit.state !== 'pending' || edit.from !== body.from || edit.quote !== body.selected)) {
+              throw new Error('The replacement exceeded the selected passage. Try a more specific request.');
+            }
+            if (!result.text.trim() && !result.edits.length) throw new Error('The model returned no answer.');
+            break;
+          } catch (parseError) {
+            if (attempt === 2) throw parseError;
+            userPrompt = `${baseUserPrompt}\n\nCORRECTION: ${parseError.message}\n` +
+              'Return valid <stilura-edits>[...]</stilura-edits> JSON where every edit has "quote" equal to the EXACT entire SELECTED TEXT, ' +
+              'or answer briefly without edits if no replacement is needed.';
+          }
         }
-        if (!result.text.trim() && !result.edits.length) throw new Error('The model returned no answer.');
         sendJson(res, 200, { answer: result.text, variants: result.edits.map(edit => edit.replacement) });
       } catch (error) { sendJson(res, 502, { error: error.message }); }
       return;

@@ -115,6 +115,7 @@ try {
   assert.equal((await request('/brief', 'POST', { document: '', answers: { reader: [] } })).status, 400);
   assert.equal((await request('/suggest', 'POST', { document: 'Draft', brief: {} })).status, 400);
   assert.equal((await request('/suggest', 'POST', { document: 'Draft', brief: 'x'.repeat(4001) })).status, 400);
+  assert.equal((await request('/suggest', 'POST', { document: 'x'.repeat(1024 * 1024 + 1) })).status, 400);
   assert.equal((await request('/rewrite', 'POST', { document, selected: 'Beta', from: 0 })).status, 400);
   assert.equal((await request('/draft', 'PUT', null)).status, 400);
   assert.equal((await request('/draft', 'PUT', { text: 'must not save' })).status, 400);

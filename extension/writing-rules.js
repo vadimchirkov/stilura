@@ -27,15 +27,20 @@ export function paragraphEnd(text, cursor) {
 }
 
 // A command is a slash at the start of the line or after a space, running to
-// the end of the line. Prose may hold a lone slash first ("1 / 2", "and /
-// or"), so the command starts at the first slash with a word right after it
+// the end of the line. Prose may hold a lone slash ("1 / 2", "and / or") or a
+// filesystem/API path ("/etc/hosts", "/api/draft"), which are not commands;
+// the command starts at the first non-path slash with a word right after it
 // ("/write"); paths and slashes inside the request ("/explain /usr/bin",
-// "/compare A / B") stay part of it. With no such slash, the last one is the
-// command: a bare "/" just typed, or "/ request" written with a space.
+// "/compare A / B") stay part of it. With no such slash, a leading slash
+// ("/ request") or a bare trailing "/" is the command.
 export function slashCommand(line, offset = 0) {
-  const starts = [...line.matchAll(/(?:^|\s)\/(?!\/)/gu)].map(match => match.index + match[0].length - 1);
+  const starts = [...line.matchAll(/(?:^|\s)\/(?!\/)/gu)]
+    .map(match => match.index + match[0].length - 1)
+    .filter(at => !/^\/[^\s/]+\//u.test(line.slice(at)));
   if (!starts.length) return null;
-  const start = starts.find(at => /\S/u.test(line[at + 1] ?? '')) ?? starts.at(-1);
+  const start = starts.find(at => /\S/u.test(line[at + 1] ?? ''))
+    ?? starts.findLast(at => !line.slice(0, at).trim() || !line.slice(at + 1).trim());
+  if (start === undefined) return null;
   return { from: offset + start, to: offset + line.length, text: line.slice(start),
     instruction: line.slice(start + 1).trim(), inline: !!line.slice(0, start).trim() };
 }

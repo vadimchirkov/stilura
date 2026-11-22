@@ -5,6 +5,7 @@ import { LocalLinter, createBinaryModuleFromUrl } from 'harper.js';
 import { clampThinkingLevel } from '@earendil-works/pi-ai';
 import { getAgentStatus } from './pi.js';
 import { CLAUDE_CODE } from './claude-code.js';
+import { ANTIGRAVITY } from './antigravity.js';
 import { renderMarkdown } from './markdown.js';
 import { lintMarkers, ignoreMarker } from './spellcheck.js';
 import { clampBubble, resolveDrift, unwrapProse, wordDiff } from './editing.js';
@@ -47,6 +48,7 @@ import {
   const selection = { thinkingLevel: 'high' };
   const context = vm.createContext({
     CLAUDE_CODE,
+    ANTIGRAVITY,
     resolveModel: async () => ({ model, selection, rt: { completeSimple: async (_model, _request, options) => { sent = options; return response; } } }),
     selectionFor: (model, level) => ({ thinkingLevel: clampThinkingLevel(model, level) }),
     request: () => ({}),

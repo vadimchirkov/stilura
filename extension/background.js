@@ -116,7 +116,8 @@ chrome.runtime.onConnect.addListener(port => {
     started = true;
     (async () => {
       const config = await settings();
-      if (!config.enabled || (message.action === 'suggest' && !message.body?.manual && !config.suggestions)) throw Error('Stilura is paused.');
+      const backgroundBlocked = ['claude-code', 'antigravity'].includes(config.agent?.provider);
+      if (!config.enabled || (message.action === 'suggest' && !message.body?.manual && (!config.suggestions || backgroundBlocked))) throw Error('Stilura is paused.');
       if (!['ask', 'write', 'suggest', 'passage-hint'].includes(message.action)) throw Error('Unknown action');
       const body = message.body;
       if (!body || (message.action !== 'passage-hint' && (typeof body.document !== 'string' || body.document.length > 60000))) throw Error('Use a field with up to 60,000 characters.');

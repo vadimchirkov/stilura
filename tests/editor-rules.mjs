@@ -34,11 +34,23 @@ for (const [line, from, instruction] of [
   ['Pick one and / or the other /summarize', 28, 'summarize'],
   ['/compare A / B', 0, 'compare A / B'],
   ['Intro /compare A / B', 6, 'compare A / B'],
+  ['/explain /usr/bin', 0, 'explain /usr/bin'],
   ['Existing text. /Explain /usr/bin', 15, 'Explain /usr/bin'],
+  ['See /etc/hosts and /write a summary', 19, 'write a summary'],
 ]) {
   const command = slashCommand(line);
   assert.equal(command?.from, from, line);
   assert.equal(command.instruction, instruction, line);
   assert.equal(command.text, line.slice(from), line);
 }
-assert.equal(slashCommand('See https://example.com and/or // note'), null);
+for (const prose of [
+  'See https://example.com and/or // note',
+  'See /etc/hosts',
+  'Check /api/draft',
+  'Edit /usr/local/bin/node',
+  '/etc/hosts',
+  'Ratio 1 / 2 is fine.',
+  'Pick one and / or the other.',
+]) {
+  assert.equal(slashCommand(prose), null, prose);
+}

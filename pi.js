@@ -2,6 +2,7 @@ import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { connectMcp } from './mcp.js';
 import { CLAUDE_CODE, askClaudeCode, claudeCodeStatus, claudeModels } from './claude-code.js';
+import { ANTIGRAVITY, askAntigravity, antigravityStatus } from './antigravity.js';
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 // Named models first. A router picks a different model per request, so the same
@@ -69,9 +70,9 @@ export function nextOfferedModel(provider, id) {
   return next ? { provider, id: next } : null;
 }
 
-export async function getAgentStatus() {
+export async function getAgentStatus({ force = false } = {}) {
   try {
-    const [rt, claudeCode] = await Promise.all([runtime(), claudeCodeStatus()]);
+    const [rt, claudeCode, antigravity] = await Promise.all([runtime(), claudeCodeStatus({ force }), antigravityStatus({ force })]);
     const available = (await rt.getAvailable()).filter(offered);
     const unique = [...new Map(available.map(model => [`${model.provider}\0${model.id}`, model])).values()];
     const models = unique.map(model => ({
@@ -108,18 +109,53 @@ export async function getAgentStatus() {
       models.push(...claudeModels);
       providers.push({ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max', models: claudeModels });
     }
+    if (antigravity.loggedIn && antigravity.models.length) {
+      models.push(...antigravity.models);
+      providers.push({ id: ANTIGRAVITY, name: 'Antigravity', models: antigravity.models });
+    }
+    const defaultSelection = selected ? selectionFor(selected)
+      : claudeCode.plan ? { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' }
+      : antigravity.loggedIn && antigravity.models.length ? { provider: ANTIGRAVITY, model: antigravity.models[0].model, thinkingLevel: 'off' }
+      : undefined;
     return {
       claudeCode,
+      antigravity,
       available: models.length > 0,
-      ...(selected ? { defaultSelection: selectionFor(selected) } : claudeCode.plan
-        ? { defaultSelection: { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' } } : {}),
+      ...(defaultSelection ? { defaultSelection } : {}),
       providers,
       models,
       authProviders,
       ...(rt.getError() ? { error: rt.getError() } : {}),
     };
   } catch (error) {
-    return { available: false, providers: [], models: [], authProviders: [], error: error.message };
+    const [claudeCode, antigravity] = await Promise.all([
+      claudeCodeStatus({ force }).catch(() => ({
+        installed: false, claudeInstalled: false, adapterInstalled: false, plan: null,
+      })),
+      antigravityStatus({ force }).catch(() => ({
+        installed: false, loggedIn: false, tier: null, models: [],
+      })),
+    ]);
+    const models = [
+      ...(claudeCode.plan ? claudeModels : []),
+      ...(antigravity.loggedIn ? antigravity.models : []),
+    ];
+    const providers = [
+      ...(claudeCode.plan ? [{ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max', models: claudeModels }] : []),
+      ...(antigravity.loggedIn && antigravity.models.length ? [{ id: ANTIGRAVITY, name: 'Antigravity', models: antigravity.models }] : []),
+    ];
+    const defaultSelection = claudeCode.plan
+      ? { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' }
+      : antigravity.loggedIn && antigravity.models.length
+        ? { provider: ANTIGRAVITY, model: antigravity.models[0].model, thinkingLevel: 'off' }
+        : undefined;
+    return {
+      claudeCode,
+      antigravity,
+      available: models.length > 0,
+      ...(defaultSelection ? { defaultSelection } : {}),
+      providers, models, authProviders: [], error: error.message,
+    };
   }
 }
 
@@ -322,6 +358,7 @@ const notSupported = message => /model is not supported when using Codex with a 
 
 export async function completeText({ systemPrompt, userPrompt, selection, maxTokens = 1500, signal, continuation = false }) {
   if (selection?.provider === CLAUDE_CODE) return askClaudeCode({ systemPrompt, userPrompt, model: selection.model, signal });
+  if (selection?.provider === ANTIGRAVITY) return askAntigravity({ systemPrompt, userPrompt, model: selection.model, signal });
   const resolved = await resolveModel(selection);
   const modelKey = `${resolved.model.provider}/${resolved.model.id}`;
   // Typing suggestions need the least reasoning the model supports, regardless
@@ -360,6 +397,10 @@ export async function completeText({ systemPrompt, userPrompt, selection, maxTok
 export async function streamText({ systemPrompt, userPrompt, messages, selection, maxTokens = 2000, signal, onText, mcp = false, onReset = () => {} }) {
   if (selection?.provider === CLAUDE_CODE) {
     await askClaudeCode({ systemPrompt, userPrompt, messages, model: selection.model, signal, onText });
+    return;
+  }
+  if (selection?.provider === ANTIGRAVITY) {
+    await askAntigravity({ systemPrompt, userPrompt, messages, model: selection.model, signal, onText });
     return;
   }
   const resolved = await resolveModel(selection);

@@ -331,15 +331,38 @@ assert.equal(commands.requests.length, 0, 'no generation was started');
   assert.equal(test.view.state.field(test.field).text, 'A different garden.');
 }
 
-// URLs, word separators and comments are ordinary text, not slash requests.
+// URLs, word separators, paths and comments are ordinary text, not slash requests.
 {
   const test = setup();
-  for (const text of ['Visit https://example.com/path', 'Use foo/bar', '// comment']) {
-    test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field] });
+  const requestField = vm.runInContext('requestField', test.context);
+  for (const text of [
+    'Visit https://example.com/path',
+    'Use foo/bar',
+    '// comment',
+    'See /etc/hosts',
+    'Check /api/draft',
+    'Edit /usr/local/bin/node',
+    'Ratio 1 / 2 is fine.',
+  ]) {
+    test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field, requestField] });
+    assert.equal(test.context.slashRequest(test.view.state), null, text);
+    assert.equal(test.view.state.field(requestField).size, 0, text);
     assert.equal(test.context.handleWrite(test.view), false, text);
   }
-  const text = 'Existing text. /Explain /usr/bin';
-  test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field] });
-  assert.equal(test.context.slashRequest(test.view.state).instruction, 'Explain /usr/bin');
+  for (const [text, expected] of [
+    ['/explain /usr/bin', 'explain /usr/bin'],
+    ['Existing text. /Explain /usr/bin', 'Explain /usr/bin'],
+  ]) {
+    test.view.state = EditorState.create({ doc: text, selection: { anchor: text.length }, extensions: [test.field, requestField] });
+    assert.equal(test.context.slashRequest(test.view.state).instruction, expected, text);
+  }
+  // Explicitly typing "/" after a path still starts an inline command via typedSlash.
+  const base = 'See /etc/hosts ';
+  let state = EditorState.create({ doc: base, selection: { anchor: base.length }, extensions: [test.field, requestField] });
+  assert.equal(test.context.slashRequest(state), null);
+  state = state.update({ changes: { from: base.length, insert: '/' }, selection: { anchor: base.length + 1 }, userEvent: 'input.type' }).state;
+  state = state.update({ changes: { from: base.length + 1, insert: 'explain it' }, selection: { anchor: base.length + 11 }, userEvent: 'input.type' }).state;
+  assert.equal(test.context.slashRequest(state).from, base.length);
+  assert.equal(test.context.slashRequest(state).instruction, 'explain it');
 }
 console.log('Generation checks passed: inline slash requests, R regeneration, concurrent edits, review and Undo.');

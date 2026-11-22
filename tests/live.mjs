@@ -5,7 +5,7 @@ import path from 'node:path';
 import { ChangeSet, EditorState } from '@codemirror/state';
 import { history, undo } from '@codemirror/commands';
 import { documentStore } from '../document-store.js';
-import { createSession } from '../live-session.js';
+import { createSession, documentSessions, readSessionAddress, sessionFile } from '../live-session.js';
 import { liveDocument } from '../src/live.js';
 import { resolveNoteRange } from '../notes.js';
 
@@ -180,6 +180,156 @@ try {
   assert.equal(bad.read().revision, initial.revision);
   assert.equal(bad.read().text, initial.text);
   assert(a.errors.length === 0 && b.errors.length === 0 && n.errors.length === 0);
+
+  // Background polling runs only while subscribed, skips unchanged files via stat, and detects external edits.
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  {
+    const file = path.join(directory, 'polled.md');
+    fs.writeFileSync(file, 'Initial content.');
+    const rawStore = documentStore(file);
+    let reads = 0;
+    const trackedStore = { ...rawStore, read() { reads++; return rawStore.read(); } };
+    const polled = createSession(trackedStore, { pollMs: 20 });
+    try {
+      const initialReads = reads;
+      assert.equal(polled.polling, false, 'polling must not start without subscribers');
+      await wait(60);
+      assert.equal(reads, initialReads, 'no disk reads without subscribers');
+
+      const events = [];
+      const unsub = polled.subscribe(event => events.push(event));
+      assert.equal(polled.polling, true, 'polling must start on subscribe');
+      await wait(60);
+      assert.equal(reads, initialReads, 'unchanged file must not trigger store.read() on poll ticks');
+
+      fs.writeFileSync(file, 'Externally updated content.');
+      for (let i = 0; i < 20 && !events.length; i++) await wait(15);
+      assert.equal(events.length, 1, 'external edit must be detected while subscribed');
+      assert.equal(events[0].type, 'reset');
+      assert.equal(events[0].current.text, 'Externally updated content.');
+
+      unsub();
+      assert.equal(polled.polling, false, 'polling must stop after last unsubscribe');
+      const readsAfterUnsub = reads;
+      fs.writeFileSync(file, 'Updated while unsubscribed.');
+      await wait(60);
+      assert.equal(reads, readsAfterUnsub, 'stopped poller must not read disk');
+      assert.equal(events.length, 1);
+    } finally {
+      polled.close();
+    }
+  }
+
+  // Idle sessions without subscribers or working claims are evicted and their .stilura-session is removed.
+  {
+    const fileA = path.join(directory, 'idle-a.md');
+    const fileB = path.join(directory, 'idle-b.md');
+    const fileC = path.join(directory, 'idle-c.md');
+    fs.writeFileSync(fileA, 'Idle A.');
+    fs.writeFileSync(fileB, 'Active B.');
+    fs.writeFileSync(fileC, 'Working C.');
+    const pool = documentSessions({ idleMs: 50 });
+    pool.listen('http://127.0.0.1:1');
+    try {
+      const sA = pool.get(fileA);
+      const sB = pool.get(fileB);
+      const unsubB = sB.subscribe(() => {});
+      const sC = pool.get(fileC);
+      const snapC = sC.read();
+      sC.updateNotes({
+        epoch: snapC.epoch, version: snapC.version,
+        operations: [{ type: 'put', id: 'n1', note: { text: 'Rewrite', quote: '', para: null, off: 0, at: new Date().toISOString() } }],
+      });
+      assert(sC.claimWork('agent-1'), 'claim must enter working status');
+
+      assert.equal(fs.existsSync(sessionFile(fileA)), true);
+      assert.equal(fs.existsSync(sessionFile(fileB)), true);
+      assert.equal(fs.existsSync(sessionFile(fileC)), true);
+
+      await wait(160);
+      assert.equal(fs.existsSync(sessionFile(fileA)), false, 'idle session must be evicted and its session file removed');
+      assert.equal(readSessionAddress(fileA), null);
+      assert.equal(fs.existsSync(sessionFile(fileB)), true, 'session with active subscriber must not be evicted');
+      assert.equal(readSessionAddress(fileB)?.token, sB.token);
+      assert.equal(fs.existsSync(sessionFile(fileC)), true, 'session with working claim must not be evicted');
+      assert.equal(pool.get(fileC).token, sC.token);
+      const reopenedA = await pool.getVerified(fileA);
+      assert.notEqual(reopenedA.token, sA.token, 're-opening an evicted session creates a fresh session');
+      assert.equal(fs.existsSync(sessionFile(fileA)), true, 're-opened session re-advertises .stilura-session');
+      assert.equal(readSessionAddress(fileA)?.token, reopenedA.token);
+      const unsubReopened = reopenedA.subscribe(() => {});
+      assert.equal(reopenedA.polling, true, 're-opened session resumes polling on subscribe');
+      unsubReopened();
+      assert.equal(reopenedA.polling, false);
+
+      unsubB();
+      await wait(160);
+      assert.equal(fs.existsSync(sessionFile(fileB)), false, 'session must be evicted after last subscriber leaves');
+    } finally {
+      pool.close();
+    }
+  }
+
+  // SSE reconnect closes the stale stream and re-subscribes with the current syncedVersion; close() cancels pending reconnect.
+  {
+    const reconnAuth = session('Start.');
+    const initial = reconnAuth.read();
+    const view = { state: EditorState.create({ doc: initial.text }) };
+    const streams = [], errors = [];
+    let sync;
+    view.dispatch = spec => {
+      const tr = view.state.update(spec); view.state = tr.state;
+      if (tr.docChanged) sync.changed(tr.changes);
+    };
+    sync = liveDocument({
+      view, url: () => 'http://local/draft/live?name=reconn.md',
+      reconnectMs: 25,
+      getNotes: () => [], onSaved() {}, onNotes() {}, onConflict() {},
+      onError: error => errors.push(error),
+      subscribe: address => {
+        const stream = { address, closed: false, onmessage: null, onopen: null, onerror: null, close() { this.closed = true; } };
+        streams.push(stream);
+        return stream;
+      },
+      request: async (address, options = {}) => {
+        const u = new URL(address);
+        let value;
+        if (options.method === 'POST') {
+          const body = JSON.parse(options.body);
+          value = body.action === 'push' ? reconnAuth.push(body) : reconnAuth.updateNotes(body);
+        } else {
+          value = reconnAuth.events(Number(u.searchParams.get('since')), u.searchParams.get('epoch'));
+        }
+        return { ok: true, json: async () => value };
+      },
+    });
+    sync.connect(initial);
+    try {
+      assert.equal(streams.length, 1);
+      assert.equal(new URL(streams[0].address).searchParams.get('since'), '0');
+
+      view.dispatch({ changes: { from: view.state.doc.length, insert: ' One.' } });
+      await sync.flush();
+      view.dispatch({ changes: { from: view.state.doc.length, insert: ' Two.' } });
+      await sync.flush();
+      assert.equal(reconnAuth.read().version, 2);
+
+      streams[0].onerror();
+      assert.equal(streams[0].closed, true, 'onerror must close the old stream');
+      assert.equal(errors.length, 1);
+      await wait(60);
+      assert.equal(streams.length, 2, 'onerror must schedule a fresh subscribe');
+      assert.equal(new URL(streams[1].address).searchParams.get('since'), '2', 'reconnect must use current syncedVersion');
+
+      streams[1].onerror();
+      sync.close();
+      await wait(60);
+      assert.equal(streams.length, 2, 'close() must cancel any scheduled reconnect');
+    } finally {
+      sync.close();
+    }
+  }
+
   console.log('Live checks passed: concurrent paragraphs, stale patches, personal undo, deduplication, reconnect, shared notes and recovery.');
 } finally {
   for (const sync of editors) sync.close();

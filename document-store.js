@@ -4,6 +4,12 @@ import { createHash, randomUUID } from 'node:crypto';
 
 const hash = text => createHash('sha256').update(text).digest('hex');
 export const MAX_DOCUMENT_BYTES = 1024 * 1024;
+export const MAX_HISTORY_SNAPSHOTS = 50;
+const SNAPSHOT_FILE = /^\d+-[a-f0-9-]+\.json$/;
+const snapshotTime = name => Number(name.slice(0, name.indexOf('-')));
+const sortSnapshotsDesc = files => files
+  .filter(name => SNAPSHOT_FILE.test(name))
+  .sort((a, b) => (snapshotTime(b) - snapshotTime(a)) || (a < b ? 1 : a > b ? -1 : 0));
 
 function migrateDraftFiles(file) {
   const suffixes = ['history', 'notes.json'].filter(suffix => fs.existsSync(`${file}.litura-${suffix}`));
@@ -72,12 +78,22 @@ export function documentStore(filename) {
     }
     return { text: text ?? '', exists: text !== undefined, revision: text === undefined ? 'missing' : hash(text), path: file, id: hash(file) };
   }
+  let lastSnapshotAt = 0;
+  function pruneHistory() {
+    try {
+      for (const name of sortSnapshotsDesc(fs.readdirSync(historyDir)).slice(MAX_HISTORY_SNAPSHOTS)) {
+        fs.rmSync(path.join(historyDir, name), { force: true });
+      }
+    } catch {
+      // Pruning old snapshots must never fail saving the draft.
+    }
+  }
   function history() {
     let files;
     try { files = fs.readdirSync(historyDir); }
     catch (error) { if (error.code === 'ENOENT') return []; throw error; }
     const items = [];
-    for (const name of files.filter(name => /^\d+-[a-f0-9-]+\.json$/.test(name)).sort().reverse().slice(0, 20)) {
+    for (const name of sortSnapshotsDesc(files).slice(0, 20)) {
       try {
         const item = JSON.parse(fs.readFileSync(path.join(historyDir, name), 'utf8'));
         if (item && typeof item.text === 'string' && typeof item.at === 'string' && typeof item.revision === 'string') items.push(item);
@@ -102,7 +118,10 @@ export function documentStore(filename) {
       if (before.exists && before.text === text) return before;
       if (before.exists && snapshot) {
         fs.mkdirSync(historyDir, { recursive: true, mode: 0o700 });
-        fs.writeFileSync(path.join(historyDir, `${Date.now()}-${randomUUID()}.json`), JSON.stringify({ text: before.text, at: new Date().toISOString(), revision: before.revision }), { mode: 0o600 });
+        const stamp = Math.max(Date.now(), lastSnapshotAt + 1);
+        lastSnapshotAt = stamp;
+        fs.writeFileSync(path.join(historyDir, `${stamp}-${randomUUID()}.json`), JSON.stringify({ text: before.text, at: new Date().toISOString(), revision: before.revision }), { mode: 0o600 });
+        pruneHistory();
       }
       const mode = before.exists ? fs.statSync(file).mode & 0o777 : 0o600;
       const output = fs.openSync(temp, 'wx', mode);

@@ -145,8 +145,25 @@ export function createPassage({
         body: JSON.stringify({ document: view.state.doc.toString(), selected: target.quote, from: target.from,
           instruction, agent: currentAgent(), context: combinedContext() || undefined }),
       });
-      const data = await response.json();
-      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+      let data = null;
+      if (typeof response.text === 'function') {
+        const raw = await response.text().catch(() => '');
+        if (raw) {
+          try { data = JSON.parse(raw); }
+          catch { data = null; }
+        }
+      } else if (typeof response.json === 'function') {
+        try { data = await response.json(); }
+        catch { data = null; }
+      }
+      if (!response.ok) {
+        const message = typeof data?.error === 'string' && data.error.trim()
+          ? data.error
+          : `HTTP ${response.status}`;
+        throw new Error(message);
+      }
+      if (!data || typeof data !== 'object') throw new Error('The model returned an invalid response.');
+      if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
       if (!current()) return;
       const live = view.state.field(passageField);
       if (!data.variants?.length) {

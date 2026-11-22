@@ -81,6 +81,9 @@ const connectRow    = document.getElementById('connect-row');
 const connectSignin = document.getElementById('connect-signin');
 const connectClaude = document.getElementById('connect-claude');
 const claudeProvider = 'claude-code';
+const connectAntigravity = document.getElementById('connect-antigravity');
+const antigravityProvider = 'antigravity';
+const subscriptionProviders = ['openai-codex', claudeProvider, antigravityProvider];
 const connectKey    = document.getElementById('connect-key');
 const connectionLine = document.getElementById('connection-line');
 const settingsError = document.getElementById('settings-error');
@@ -260,6 +263,7 @@ function providerChoices() {
   for (const provider of oauthInfo.supported) add(provider.id, provider.label ?? provider.name, { signin: provider, name: provider.label ?? provider.name });
   for (const provider of agentInfo.providers) add(provider.id, provider.name);
   if (agentInfo.claudeCode) add(claudeProvider, 'Claude Code · Pro/Max');
+  if (agentInfo.antigravity) add(antigravityProvider, 'Antigravity');
   const choices = [...byId.values()].map(choice => ({ ...choice, connected: agentInfo.models.some(model => model.provider === choice.id) }));
   return choices.sort((a, b) => b.connected - a.connected || a.name.localeCompare(b.name));
 }
@@ -271,6 +275,7 @@ let modelSetup = '';
 let guidedStep = 1;
 const chatService = document.getElementById('service-chatgpt');
 const claudeService = document.getElementById('service-claude');
+const antigravityService = document.getElementById('service-antigravity');
 const apiService = document.getElementById('service-api');
 const apiModelSettings = document.getElementById('api-model-settings');
 const guidedStepsEl = document.getElementById('guided-steps');
@@ -304,17 +309,17 @@ function renderModelSettings() {
     ?? normalizeSelection(agentInfo.defaultSelection)
     ?? (agentInfo.models[0] ? normalizeSelection({ ...agentInfo.models[0], thinkingLevel: 'medium' }) : null);
   const choices = providerChoices();
-  const apiChoices = choices.filter(choice => !choice.signin && choice.id !== claudeProvider);
+  const apiChoices = choices.filter(choice => !choice.signin && choice.id !== claudeProvider && choice.id !== antigravityProvider);
   const apiOpen = modelSetup === 'api';
   const guided = settingsDialog.dataset.guided === 'true';
   const activeAgent = currentAgent();
   const id = modelSetup && !apiOpen ? modelSetup : activeAgent?.provider;
-  const showSubscriptionModel = !guided && ['openai-codex', claudeProvider].includes(id) && Boolean(modelFor(id));
+  const showSubscriptionModel = !guided && subscriptionProviders.includes(id) && Boolean(modelFor(id));
   document.getElementById('writing-model-heading').textContent = guided ? 'Connect your writing assistant' : 'Writing model';
   apiModelSettings.hidden = !apiOpen && !showSubscriptionModel;
   document.getElementById('provider-field').hidden = !apiOpen;
   apiService.setAttribute('aria-expanded', String(apiOpen));
-  for (const [tab, section] of [[chatService, 'openai-codex'], [claudeService, claudeProvider], [apiService, 'api']]) {
+  for (const [tab, section] of [[chatService, 'openai-codex'], [claudeService, claudeProvider], [antigravityService, antigravityProvider], [apiService, 'api']]) {
     if (guided) tab.removeAttribute('aria-pressed');
     else tab.setAttribute('aria-pressed', String(section === (apiOpen ? 'api' : id)));
   }
@@ -325,12 +330,20 @@ function renderModelSettings() {
   const provider = choices.find(choice => choice.id === (apiOpen ? fieldValue(providerEl) : id));
   const connected = !!provider?.connected;
   modelField.hidden = !(connected && (apiOpen || showSubscriptionModel));
-  thinkingField.hidden = modelField.hidden || provider?.id === claudeProvider;
-  for (const [card, id, label] of [[chatService, 'openai-codex', 'Plus or Pro'], [claudeService, claudeProvider, 'Claude Pro or Max']]) {
+  thinkingField.hidden = modelField.hidden || provider?.id === claudeProvider || provider?.id === antigravityProvider;
+  for (const [card, id, label] of [
+    [chatService, 'openai-codex', 'Plus or Pro'],
+    [claudeService, claudeProvider, 'Claude Pro or Max'],
+    [antigravityService, antigravityProvider, 'Google AI · agy'],
+  ]) {
     const model = modelFor(id);
     const active = currentAgent()?.provider === id;
     const plan = id === claudeProvider && agentInfo.claudeCode?.plan;
-    const modelName = plan ? `Claude ${plan === 'max' ? 'Max' : 'Pro'} · ${model?.name || model?.model}` : (model?.name || model?.model);
+    const tier = id === antigravityProvider && agentInfo.antigravity?.tier;
+    const modelLabel = model?.name || model?.model;
+    const modelName = plan ? `Claude ${plan === 'max' ? 'Max' : 'Pro'} · ${modelLabel}`
+      : tier ? `${tier} · ${modelLabel}`
+      : modelLabel;
     card.querySelector('small').textContent = model ? `${active ? '' : 'Connected · '}${modelName}` : label;
     card.classList.toggle('is-active', active);
     card.classList.toggle('is-connected', Boolean(model));
@@ -343,7 +356,7 @@ function renderModelSettings() {
   chatAction.hidden = apiOpen || id !== 'openai-codex' || !chat?.signin?.configured;
   if (!chatAction.hidden && !chatAction.firstChild) chatAction.append(signOutButton(chat));
   if (chatAction.hidden) chatAction.replaceChildren();
-  const activeIsApi = Boolean(activeAgent && !['openai-codex', claudeProvider].includes(activeAgent.provider));
+  const activeIsApi = Boolean(activeAgent && !subscriptionProviders.includes(activeAgent.provider));
   const activeApiChoice = activeIsApi ? choices.find(choice => choice.id === activeAgent.provider) : null;
   const activeApiModel = activeIsApi ? agentInfo.models.find(item => item.provider === activeAgent.provider && item.model === activeAgent.model) : null;
   apiService.querySelector('small').textContent = activeIsApi
@@ -355,6 +368,7 @@ function renderModelSettings() {
   else apiService.removeAttribute('aria-current');
   chatService.setAttribute('aria-expanded', String(id === 'openai-codex' && !connected));
   claudeService.setAttribute('aria-expanded', String(id === claudeProvider && !connected));
+  antigravityService.setAttribute('aria-expanded', String(id === antigravityProvider && !connected));
   if (connected && (apiOpen || showSubscriptionModel)) {
     const models = agentInfo.models.filter(model => model.provider === provider.id);
     setOptions(modelEl, models.map(model => ({ value: model.model, label: model.name || model.model })), draftSelection?.model);
@@ -378,12 +392,30 @@ function renderConnection(provider) {
   connectSignin.hidden = connectRow.hidden || !provider.signin || modelSetup !== 'openai-codex';
   connectClaude.hidden = connectRow.hidden || provider.id !== claudeProvider;
   if (!connectClaude.hidden) {
-    const installed = agentInfo.claudeCode.installed;
+    const status = agentInfo.claudeCode ?? {};
+    const installed = Boolean(status.installed);
+    const claudeInstalled = status.claudeInstalled ?? installed;
+    const adapterInstalled = status.adapterInstalled ?? installed;
     document.getElementById('claude-connect-hint').textContent = installed
       ? 'Sign in with Claude Pro or Max in Terminal, then check the connection here.'
-      : 'Install Claude Code and the ACP adapter, then sign in from Terminal.';
+      : claudeInstalled && !adapterInstalled
+        ? 'Claude Code is installed, but the ACP adapter is missing. Install it in Terminal, then check the connection here.'
+        : !claudeInstalled && adapterInstalled
+          ? 'The ACP adapter is installed, but Claude Code CLI is missing. Install Claude Code, then sign in from Terminal.'
+          : 'Install Claude Code and the ACP adapter, then sign in from Terminal.';
     document.getElementById('claude-command').hidden = !installed;
+    const adapterCommand = document.getElementById('claude-adapter-command');
+    if (adapterCommand) adapterCommand.hidden = adapterInstalled;
     document.getElementById('claude-install').hidden = installed;
+  }
+  connectAntigravity.hidden = connectRow.hidden || provider.id !== antigravityProvider;
+  if (!connectAntigravity.hidden) {
+    const installed = Boolean(agentInfo.antigravity?.installed);
+    document.getElementById('antigravity-connect-hint').textContent = installed
+      ? 'Sign in to Antigravity in Terminal, then check the connection here.'
+      : 'Install Antigravity (agy), then sign in from Terminal.';
+    document.getElementById('antigravity-command').hidden = !installed;
+    document.getElementById('antigravity-install').hidden = installed;
   }
   connectKey.hidden = connectRow.hidden || modelSetup !== 'api' || !provider.key;
   if (!connectKey.hidden) {
@@ -398,13 +430,13 @@ function renderConnection(provider) {
     return span;
   };
   const line = [];
-  if (connected && ['openai-codex', claudeProvider].includes(provider.id)) {
+  if (connected && subscriptionProviders.includes(provider.id)) {
     // Subscription status is shown on its service card.
   } else if (connected && provider.key?.configured && provider.key.source !== 'environment') {
     line.push(statusEl('Connected with an API key. '), removeKeyButton(provider));
   } else if (connected) {
     line.push(statusEl(provider.key?.source === 'environment' ? `Connected to ${provider.name} with a key from the environment.` : `Connected to ${provider.name}.`));
-  } else if (provider && !provider.signin && !provider.key && provider.id !== claudeProvider) {
+  } else if (provider && !provider.signin && !provider.key && provider.id !== claudeProvider && provider.id !== antigravityProvider) {
     line.push('This provider is configured outside Stilura.');
   }
   connectionLine.replaceChildren(...line);
@@ -490,8 +522,8 @@ function selectProvider(id) {
 const connectedTo = selectProvider;
 
 
-async function refreshAgent() {
-  agentInfo = await api('/api/agent/status');
+async function refreshAgent({ force = false } = {}) {
+  agentInfo = await api(force ? '/api/agent/status?refresh=1' : '/api/agent/status');
   const savedNormalized = normalizeSelection(agentSelection);
   if (savedNormalized) {
     // Saved model still exists in current catalog — keep it.
@@ -557,7 +589,7 @@ async function openSettings(tab) {
     delete settingsDialog.dataset.guided;
     guidedStep = 1;
   }
-  modelSetup = draftSelection && !['openai-codex', claudeProvider].includes(draftSelection.provider) ? 'api' : '';
+  modelSetup = draftSelection && !subscriptionProviders.includes(draftSelection.provider) ? 'api' : '';
   renderModelSettings();
   renderOAuthFlow();
   if (!settingsDialog.open) settingsDialog.showModal();
@@ -578,6 +610,14 @@ document.getElementById('claude-copy').addEventListener('click', async event => 
     setTimeout(() => { button.textContent = 'Copy'; }, 1500);
   } catch { button.textContent = 'Copy failed'; }
 });
+document.getElementById('claude-adapter-copy')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  try {
+    await navigator.clipboard.writeText('npm i -g @agentclientprotocol/claude-agent-acp');
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+  } catch { button.textContent = 'Copy failed'; }
+});
 document.getElementById('claude-recheck').addEventListener('click', async event => {
   const button = event.currentTarget;
   const prevText = button.textContent;
@@ -585,10 +625,39 @@ document.getElementById('claude-recheck').addEventListener('click', async event 
   button.textContent = 'Checking…';
   settingsError.textContent = '';
   try {
-    await refreshAgent();
+    await refreshAgent({ force: true });
     if (modelSetup !== claudeProvider) return;
     selectProvider(claudeProvider);
     if (!agentInfo.claudeCode?.plan) settingsError.textContent = 'Claude Code is not connected to a Pro or Max account.';
+  } catch (error) { settingsError.textContent = error.message; }
+  finally {
+    button.disabled = false;
+    button.textContent = prevText;
+  }
+});
+document.getElementById('antigravity-copy')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  try {
+    await navigator.clipboard.writeText('agy acp --login');
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+  } catch { button.textContent = 'Copy failed'; }
+});
+document.getElementById('antigravity-recheck')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  const prevText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Checking…';
+  settingsError.textContent = '';
+  try {
+    await refreshAgent({ force: true });
+    if (modelSetup !== antigravityProvider) return;
+    selectProvider(antigravityProvider);
+    if (!agentInfo.antigravity?.loggedIn) {
+      settingsError.textContent = agentInfo.antigravity?.installed
+        ? 'Antigravity is not signed in. Run agy acp --login in Terminal.'
+        : 'Antigravity (agy) was not found. Install it and check again.';
+    }
   } catch (error) { settingsError.textContent = error.message; }
   finally {
     button.disabled = false;
@@ -929,6 +998,11 @@ claudeService.addEventListener('click', () => {
   if (settingsDialog.dataset.guided === 'true') guidedStep = 2;
   selectProvider(claudeProvider);
 });
+antigravityService.addEventListener('click', () => {
+  modelSetup = antigravityProvider;
+  if (settingsDialog.dataset.guided === 'true') guidedStep = 2;
+  selectProvider(antigravityProvider);
+});
 apiService.addEventListener('click', () => {
   const fromStep1 = settingsDialog.dataset.guided === 'true' && guidedStep === 1;
   modelSetup = fromStep1 ? 'api' : (modelSetup === 'api' ? '' : 'api');
@@ -1010,7 +1084,7 @@ const { cancelSuggestion, suggestSchedule, suggestionUpdate, suggestFetch, pendi
   slashRequest: state => slashRequest(state),
   ensureAgent: () => ensureAgent(),
   activeSuggestAgent: () => activeSuggestAgent(),
-  backgroundAllowed: () => currentAgent()?.provider !== claudeProvider,
+  backgroundAllowed: () => ![claudeProvider, antigravityProvider].includes(currentAgent()?.provider),
   currentAgent: () => currentAgent(),
   briefContext: () => briefContext(),
   startJob: options => startJob(options),

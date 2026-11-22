@@ -208,6 +208,10 @@
             <span class="model-service-icon"><img src="/icons/claude.svg" alt=""></span>
             <span><strong>Claude Code</strong><small>Claude Pro or Max</small></span>
           </button>
+          <button type="button" id="service-antigravity" class="model-service" aria-controls="connect-antigravity" aria-expanded="false">
+            <span class="model-service-icon" aria-hidden="true">✦</span>
+            <span><strong>Antigravity</strong><small>Google AI · agy</small></span>
+          </button>
           <button type="button" id="service-api" class="model-service" aria-controls="api-model-settings" aria-expanded="false">
             <span class="model-service-icon" aria-hidden="true">⚿</span>
             <span><strong>API key</strong><small>Choose a provider</small></span>
@@ -257,8 +261,15 @@
           <div id="connect-claude" hidden>
             <p class="settings-hint" id="claude-connect-hint"></p>
             <div id="claude-command" class="claude-command" hidden><code>claude auth login</code><button type="button" id="claude-copy" class="copy-inline">Copy</button></div>
+            <div id="claude-adapter-command" class="claude-command" hidden><code>npm i -g @agentclientprotocol/claude-agent-acp</code><button type="button" id="claude-adapter-copy" class="copy-inline">Copy</button></div>
             <p id="claude-install" class="settings-hint"><a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener noreferrer">Install Claude Code</a> · <a href="https://zed.dev/acp/agent/claude-agent" target="_blank" rel="noopener noreferrer">Claude ACP adapter</a></p>
             <button type="button" id="claude-recheck">Check connection</button>
+          </div>
+          <div id="connect-antigravity" hidden>
+            <p class="settings-hint" id="antigravity-connect-hint"></p>
+            <div id="antigravity-command" class="claude-command" hidden><code>agy acp --login</code><button type="button" id="antigravity-copy" class="copy-inline">Copy</button></div>
+            <p id="antigravity-install" class="settings-hint"><a href="https://antigravity.google" target="_blank" rel="noopener noreferrer">Install Antigravity (agy)</a></p>
+            <button type="button" id="antigravity-recheck">Check connection</button>
           </div>
           <div id="connect-key" hidden>
             <label class="settings-label" for="api-key" id="api-key-label">API key</label>
