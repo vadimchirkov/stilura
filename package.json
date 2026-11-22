@@ -30,6 +30,7 @@
     "index.js",
     "http-util.js",
     "tasks.js",
+    "ai-routes.js",
     "brief.js",
     "chat-edits.js",
     "pi.js",

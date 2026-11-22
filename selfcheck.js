@@ -40,8 +40,8 @@ import {
 // Keep the mock at the provider boundary, not at the truncation guard.
 {
   const source = fs.readFileSync(new URL('./pi.js', import.meta.url), 'utf8');
-  const server = fs.readFileSync(new URL('./index.js', import.meta.url), 'utf8');
-  assert.match(server.slice(server.indexOf("if (url.pathname === '/suggest')")), /requestSuggestion\(/);
+  const server = fs.readFileSync(new URL('./ai-routes.js', import.meta.url), 'utf8');
+  assert.match(server.slice(server.indexOf('async function suggest(')), /requestSuggestion\(/);
   const code = source.slice(source.indexOf('const options ='), source.indexOf('export async function streamText')).replace('export ', '');
   let response, sent;
   const model = { reasoning: true };
