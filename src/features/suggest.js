@@ -136,6 +136,7 @@ export function createSuggest({
           cursor:   pos,
           agent,
           manual,
+          name: docState.documentName || undefined,
           brief: brief || undefined,
         }),
         signal: job.signal,

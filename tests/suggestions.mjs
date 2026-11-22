@@ -63,6 +63,13 @@ for (const bad of ['Explanation\nTEXT: continued', '```text\nTEXT: continued\n``
   assert.equal(document.slice(0, 3) + text + document.slice(3), 'We finally met yesterday.');
 }
 
+// The document id reaches the model call, for a per-document cache session.
+{
+  const seen = [];
+  await requestSuggestion({ document: 'Draft', documentId: 'a.md' }, async request => { seen.push(request.documentId); return 'TEXT: more'; });
+  assert.deepEqual(seen, ['a.md']);
+}
+
 // Recover only a format failure, at most once, under the original deadline.
 {
   const requests = [], signal = new AbortController().signal;

@@ -52,6 +52,7 @@ import {
     resolveModel: async () => ({ model, selection, rt: { completeSimple: async (_model, _request, options) => { sent = options; return response; } } }),
     selectionFor: (model, level) => ({ thinkingLevel: clampThinkingLevel(model, level) }),
     request: () => ({}),
+    suggestSessionId: () => 'stilura-suggest',
   });
   vm.runInContext(code, context);
   response = { stopReason: 'length', content: [{ type: 'text', text: 'the next useful wor' }] };

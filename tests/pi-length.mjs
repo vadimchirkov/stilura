@@ -24,12 +24,17 @@ fs.writeFileSync(path.join(dir, 'models.json'), JSON.stringify({ providers: { te
   models: [{ id: 'model', name: 'Test', reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 8000 }],
 } } }));
 Object.assign(process.env, { PI_CODING_AGENT_DIR: dir, PI_PROVIDER: 'test', PI_MODEL: 'model', STILURA_OFFLINE_MODELS: '1', PI_OFFLINE: '1' });
-const { completeText } = await import('../pi.js');
+const { completeText, suggestSessionId } = await import('../pi.js');
 const complete = async (...turns) => {
   requests.length = 0; replies = turns;
   const text = await completeText({ systemPrompt: 's', userPrompt: 'u', continuation: true, signal: AbortSignal.timeout(10_000) });
   return { text, calls: requests.length, budgets: requests.map(request => request.max_completion_tokens ?? request.max_tokens) };
 };
+// Continuations of different documents never share a prompt-cache session.
+assert.equal(suggestSessionId(), 'stilura-suggest');
+assert.notEqual(suggestSessionId('a.md'), suggestSessionId('b.md'));
+assert.equal(suggestSessionId('a.md'), suggestSessionId('a.md'));
+assert.match(suggestSessionId('../weird name\n.md'), /^stilura-suggest:[0-9a-f]{16}$/);
 try {
   // complete answers pass through untouched
   assert.deepEqual((await complete(['TEXT: fine.', 'stop'])).text, 'TEXT: fine.');

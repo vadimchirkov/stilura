@@ -280,14 +280,14 @@ async function rewrite({ res, body, signal }) {
 //  Returns: { suggestion: string }  — a short natural continuation
 //
 async function suggest({ res, body, signal }) {
-  const { context, brief, document: doc, cursor, manual } = body;
+  const { context, brief, document: doc, cursor, manual, name } = body;
   if (brief?.length > 4000) return sendJson(res, 400, { error: 'Brief is too long' });
 
   const at     = cursor ?? (doc ?? '').length;
   try {
     const text = await requestSuggestion({
       document: doc, cursor: at, context, brief, style: readStyle(), manual: !!manual,
-      selection: body.agent,
+      selection: body.agent, documentId: name,
       signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
     }, completeText);
     sendJson(res, 200, { suggestion: text });

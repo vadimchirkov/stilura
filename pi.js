@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { connectMcp } from './mcp.js';
@@ -386,6 +387,12 @@ const request = (systemPrompt, userPrompt, history) => ({
       : { role: message.role, content: message.content, timestamp: Date.now() }),
 });
 
+// One prompt-cache session per document, so two open drafts do not evict each
+// other's cached prefix. The id is hashed: it is a file name from the client.
+export const suggestSessionId = documentId => documentId
+  ? `stilura-suggest:${createHash('sha256').update(documentId).digest('hex').slice(0, 16)}`
+  : 'stilura-suggest';
+
 const options = (selection, maxTokens, signal) => ({
   maxTokens,
   signal,
@@ -400,7 +407,7 @@ const mandatoryReasoning = response => /reasoning is mandatory/i.test(response.e
 // A ChatGPT plan that does not serve the model (see OAUTH_MODELS).
 const notSupported = message => /model is not supported when using Codex with a ChatGPT account/i.test(message ?? '');
 
-export async function completeText({ systemPrompt, userPrompt, selection, maxTokens = 1500, signal, continuation = false }) {
+export async function completeText({ systemPrompt, userPrompt, selection, maxTokens = 1500, signal, continuation = false, documentId }) {
   if (selection?.provider === CLAUDE_CODE) return askClaudeCode({ systemPrompt, userPrompt, model: selection.model, signal });
   if (selection?.provider === ANTIGRAVITY) return askAntigravity({ systemPrompt, userPrompt, model: selection.model, signal });
   const resolved = await resolveModel(selection);
@@ -414,7 +421,7 @@ export async function completeText({ systemPrompt, userPrompt, selection, maxTok
     // The session key routes OpenAI-style providers to a warm prompt cache:
     // measured on a long draft, 86% of input cached and ~1.6 s → ~1.0 s.
     return resolved.rt.completeSimple(resolved.model, request(systemPrompt, userPrompt),
-      { ...options(effectiveSelection, budget, signal), ...(continuation ? { sessionId: 'stilura-suggest' } : {}) });
+      { ...options(effectiveSelection, budget, signal), ...(continuation ? { sessionId: suggestSessionId(documentId) } : {}) });
   };
   let level = reasoningRequired.has(modelKey) ? 'minimal' : 'off';
   let response = await ask(level);
@@ -424,7 +431,7 @@ export async function completeText({ systemPrompt, userPrompt, selection, maxTok
   }
   if (response.stopReason === 'error' && notSupported(response.errorMessage)) {
     const next = nextOfferedModel(resolved.model.provider, resolved.model.id);
-    if (next) return completeText({ systemPrompt, userPrompt, selection: { ...resolved.selection, model: next.id }, maxTokens, signal, continuation });
+    if (next) return completeText({ systemPrompt, userPrompt, selection: { ...resolved.selection, model: next.id }, maxTokens, signal, continuation, documentId });
   }
   if (response.stopReason === 'error' || response.stopReason === 'aborted') {
     throw new Error(response.errorMessage ?? 'Pi request failed');
