@@ -70,7 +70,7 @@ export function resolveWorkspaceFile(dir, name) {
 // stripped line by line — headings, links, images, tags, comments and
 // frontmatter — so the card never shows `<img …>` or `#` artefacts.
 // Cut on a word boundary; a sliced half-word reads as a typo.
-export function cardExcerpt(text) {
+function cardExcerpt(text) {
   const lines = text.replace(/<!--[\s\S]*?-->/g, ' ').split('\n');
   let inFrontmatter = false;
   const kept = [];

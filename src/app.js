@@ -37,6 +37,7 @@ import { clearGhostFx, ghostField, ghostClear, ghostAccept } from './editor/ghos
 import { spellMarkerField, createSpelling } from './editor/spelling.js';
 import { combobox, setOptions, fieldValue } from './combobox.js';
 import { chatEl } from './dom.js';
+import { safeJson, formatFileSize, timeAgo } from './format.js';
 import { api } from './api.js';
 import { createDocumentState } from './document-state.js';
 import { createUpdateCheck } from './update.js';
@@ -176,12 +177,6 @@ const docStorage = {
 const jobs = new Set();
 // JSON in storage can be stale, truncated, or hand-edited. A corrupt value
 // must read as its fallback, never throw at the call site.
-function safeJson(value, fallback) {
-  try {
-    const parsed = JSON.parse(value ?? '');
-    return parsed ?? fallback;
-  } catch { return fallback; }
-}
 // Background work is the writer's text being checked while they type; it is
 // not something they pressed send for. Only what they started turns the send
 // button into a stop button.
@@ -3437,22 +3432,6 @@ const fileList = document.getElementById('file-list');
 const fileFilter = document.getElementById('file-filter');
 let sidebarFiles = [];
 let sidebarToggleTimer = null;
-function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-// Card timestamp: short relative age, falling back to a date past a month.
-function timeAgo(iso) {
-  const at = new Date(iso).getTime();
-  if (!at) return '';
-  const seconds = Math.max(0, (Date.now() - at) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 30 * 86400) return `${Math.floor(seconds / 86400)}d ago`;
-  return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
 // True only where the sidebar is a layer over the draft rather than a column
 // beside it — the same 640px the stylesheet switches the panel to `fixed` at.
 // Above it the panel is part of the layout, and dismissing it on Escape or a
