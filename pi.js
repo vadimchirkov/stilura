@@ -80,6 +80,21 @@ export function getAgentStatus({ force = false } = {}) {
   return statusInflight.get(force);
 }
 
+// What the Claude Code and Antigravity subscriptions add to the model list.
+function externalAgents(claudeCode, antigravity) {
+  const agy = antigravity.loggedIn && antigravity.models.length > 0;
+  return {
+    models: [...(claudeCode.plan ? claudeModels : []), ...(agy ? antigravity.models : [])],
+    providers: [
+      ...(claudeCode.plan ? [{ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max' }] : []),
+      ...(agy ? [{ id: ANTIGRAVITY, name: 'Antigravity' }] : []),
+    ],
+    defaultSelection: claudeCode.plan ? { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' }
+      : agy ? { provider: ANTIGRAVITY, model: antigravity.models[0].model, thinkingLevel: 'off' }
+      : undefined,
+  };
+}
+
 async function buildAgentStatus({ force }) {
   try {
     const [rt, claudeCode, antigravity] = await Promise.all([runtime(), claudeCodeStatus({ force }), antigravityStatus({ force })]);
@@ -114,18 +129,10 @@ async function buildAgentStatus({ force }) {
     const selected = configured
       ?? FALLBACK_MODELS.map(([provider, id]) => unique.find(model => model.provider === provider && model.id === id)).find(Boolean)
       ?? unique[0];
-    if (claudeCode.plan) {
-      models.push(...claudeModels);
-      providers.push({ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max' });
-    }
-    if (antigravity.loggedIn && antigravity.models.length) {
-      models.push(...antigravity.models);
-      providers.push({ id: ANTIGRAVITY, name: 'Antigravity' });
-    }
-    const defaultSelection = selected ? selectionFor(selected)
-      : claudeCode.plan ? { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' }
-      : antigravity.loggedIn && antigravity.models.length ? { provider: ANTIGRAVITY, model: antigravity.models[0].model, thinkingLevel: 'off' }
-      : undefined;
+    const external = externalAgents(claudeCode, antigravity);
+    models.push(...external.models);
+    providers.push(...external.providers);
+    const defaultSelection = selected ? selectionFor(selected) : external.defaultSelection;
     return {
       claudeCode,
       antigravity,
@@ -145,19 +152,7 @@ async function buildAgentStatus({ force }) {
         installed: false, loggedIn: false, tier: null, models: [],
       })),
     ]);
-    const models = [
-      ...(claudeCode.plan ? claudeModels : []),
-      ...(antigravity.loggedIn ? antigravity.models : []),
-    ];
-    const providers = [
-      ...(claudeCode.plan ? [{ id: CLAUDE_CODE, name: 'Claude Code · Pro/Max' }] : []),
-      ...(antigravity.loggedIn && antigravity.models.length ? [{ id: ANTIGRAVITY, name: 'Antigravity' }] : []),
-    ];
-    const defaultSelection = claudeCode.plan
-      ? { provider: CLAUDE_CODE, model: claudeModels[0].model, thinkingLevel: 'off' }
-      : antigravity.loggedIn && antigravity.models.length
-        ? { provider: ANTIGRAVITY, model: antigravity.models[0].model, thinkingLevel: 'off' }
-        : undefined;
+    const { models, providers, defaultSelection } = externalAgents(claudeCode, antigravity);
     return {
       claudeCode,
       antigravity,
