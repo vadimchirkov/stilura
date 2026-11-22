@@ -412,18 +412,20 @@ export async function completeText({ systemPrompt, userPrompt, selection, maxTok
   const modelKey = `${resolved.model.provider}/${resolved.model.id}`;
   // Typing suggestions need the least reasoning the model supports, regardless
   // of the default model settings. Mandatory-reasoning models need headroom.
-  const ask = async level => {
+  const ask = async (level, scale = 1) => {
     const effectiveSelection = continuation ? selectionFor(resolved.model, level) : resolved.selection;
-    const budget = continuation ? (effectiveSelection.thinkingLevel === 'off' ? 256 : 2048) : maxTokens;
+    const wanted = (continuation ? (effectiveSelection.thinkingLevel === 'off' ? 256 : 2048) : maxTokens) * scale;
+    const budget = Math.min(wanted, resolved.model.maxTokens ?? wanted);
     // The session key routes OpenAI-style providers to a warm prompt cache:
     // measured on a long draft, 86% of input cached and ~1.6 s → ~1.0 s.
     return resolved.rt.completeSimple(resolved.model, request(systemPrompt, userPrompt),
       { ...options(effectiveSelection, budget, signal), ...(continuation ? { sessionId: 'stilura-suggest' } : {}) });
   };
-  let response = await ask(reasoningRequired.has(modelKey) ? 'minimal' : 'off');
+  let level = reasoningRequired.has(modelKey) ? 'minimal' : 'off';
+  let response = await ask(level);
   if (continuation && !reasoningRequired.has(modelKey) && response.stopReason === 'error' && mandatoryReasoning(response)) {
     reasoningRequired.add(modelKey);
-    response = await ask('minimal');
+    response = await ask(level = 'minimal');
   }
   if (response.stopReason === 'error' && notSupported(response.errorMessage)) {
     const next = nextOfferedModel(resolved.model.provider, resolved.model.id);
@@ -432,13 +434,25 @@ export async function completeText({ systemPrompt, userPrompt, selection, maxTok
   if (response.stopReason === 'error' || response.stopReason === 'aborted') {
     throw new Error(response.errorMessage ?? 'Pi request failed');
   }
-  const text = response.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('').trim();
-  if (response.stopReason === 'length') {
-    if (!continuation) throw new Error('Model output was truncated. Try a smaller passage or less reasoning.');
-    // Only continuations may use partial output. Drop the potentially cut word;
-    // a reasoning-only response or a single cut token offers nothing to accept.
+  const textOf = response => response.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('').trim();
+  // Only continuations may use partial output. Drop the potentially cut word.
+  const prefixOf = text => {
     const boundary = text.search(/\s+\S*$/u);
     return boundary < 0 ? '' : text.slice(0, boundary).trimEnd();
+  };
+  let text = textOf(response);
+  if (response.stopReason === 'length') {
+    if (!continuation) throw new Error('Model output was truncated. Try a smaller passage or less reasoning.');
+    let prefix = prefixOf(text);
+    // A short TEXT:/WORD: answer cut at its only word, or a reasoning-only
+    // response, leaves nothing to accept: retry once with a larger budget.
+    if (!prefix.replace(/^(?:TEXT|WORD):?/i, '').trim()) {
+      response = await ask(level, 4);
+      if (response.stopReason === 'error' || response.stopReason === 'aborted') throw new Error(response.errorMessage ?? 'Pi request failed');
+      text = textOf(response);
+      prefix = response.stopReason === 'length' ? prefixOf(text) : text;
+    }
+    return prefix;
   }
   return text;
 }
