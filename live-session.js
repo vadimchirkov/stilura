@@ -100,13 +100,16 @@ export function documentSessions({ idleMs = 5 * 60_000 } = {}) {
     reaper = setInterval(sweep, interval);
     reaper.unref();
   }
+  // The session this server already holds for a file, marked as in use.
+  function held(file) {
+    const session = sessions.get(file);
+    session?.touch();
+    return session;
+  }
   function get(filename) {
     const store = documentStore(filename), file = store.read().path;
-    if (sessions.has(file)) {
-      const existing = sessions.get(file);
-      existing.touch();
-      return existing;
-    }
+    const existing = held(file);
+    if (existing) return existing;
     const other = readSessionAddress(file);
     if (other && other.pid !== process.pid) throw Object.assign(new Error('This document is already open in another Stilura server.'), { status: 409 });
     const session = createSession(store, { trackChanges: true });
@@ -121,12 +124,9 @@ export function documentSessions({ idleMs = 5 * 60_000 } = {}) {
     // server it advertises. Only waits when a foreign claim is on disk, so
     // opening a draft you hold yourself stays synchronous.
     async getVerified(filename) {
-      const store = documentStore(filename), file = store.read().path;
-      if (sessions.has(file)) {
-        const existing = sessions.get(file);
-        existing.touch();
-        return existing;
-      }
+      const file = documentStore(filename).read().path;
+      const existing = held(file);
+      if (existing) return existing;
       const other = readSessionAddress(file);
       if (other && other.pid !== process.pid && !await answers(other)) forgetSession(file, other.token);
       return get(filename);
