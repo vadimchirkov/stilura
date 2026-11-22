@@ -3003,7 +3003,10 @@ const workView = new EditorView({
 
       EditorView.updateListener.of(update => {
         if (passage.job() && (!update.state.field(passageField) || update.state.readOnly || docState.loadingDocument || docState.savePaused)) passage.job().abort();
-        if (generate.job() && (!update.state.field(generationField) || update.state.readOnly || docState.loadingDocument || docState.savePaused)) generate.job().abort();
+        if (generate.job() && (!update.state.field(generationField) || update.state.readOnly || docState.loadingDocument || docState.savePaused)) {
+          if (!generate.job().signal.aborted) notify('Generation stopped because the draft changed or was reloaded. Your request is unchanged.');
+          generate.job().abort();
+        }
         if (update.selectionSet && !update.docChanged) for (const ui of chatEditCards.values()) if (!ui.retarget.hidden) syncRetarget(ui);
         if (update.docChanged) {
           liveSync?.changed(update.changes);

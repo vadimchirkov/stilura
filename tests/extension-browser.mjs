@@ -371,6 +371,10 @@ try {
   assert.equal(await assistant.locator('.preview').innerText(), 'Partial fixture answer — completed discussion.');
   await plain.press('Tab');
   assert.equal(await plain.inputValue(), 'Partial fixture answer — completed discussion.');
+  await plain.fill('A quiet room.'); await select(plain, 2, 7);
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
+  await assistant.getByLabel('Passage request').waitFor();
+  await close();
   await plain.fill('');
   await plain.pressSequentially('/write a shrt story');
   for (let i = 0; i < 8; i++) await plain.press('ArrowLeft');

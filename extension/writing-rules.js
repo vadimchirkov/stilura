@@ -20,6 +20,11 @@ export function reviewAction(event, variants = 1) {
   return key.length === 1 && !ctrlKey && !metaKey && !altKey ? 'Edit' : null;
 }
 
+// Cmd/Ctrl+K asks about the selection, as in the Stilura editor.
+export function passageShortcut(event) {
+  return (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && !event.isComposing && event.key?.toLowerCase() === 'k';
+}
+
 export function paragraphEnd(text, cursor) {
   if (cursor < 0 || cursor > text.length || (cursor < text.length && text[cursor] !== '\n')) return false;
   const next = text.indexOf('\n', cursor + 1);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { armedSurvives, reviewAction, rewriteInstruction, slashCommand } from '../extension/writing-rules.js';
+import { armedSurvives, passageShortcut, reviewAction, rewriteInstruction, slashCommand } from '../extension/writing-rules.js';
 
 for (const [event, count, expected] of [
   [{ key: 'Tab' }, 1, 'Accept'],
@@ -64,3 +64,14 @@ for (const prose of [
   assert(!armedSurvives(6, 'Intro\nwrte a haiku', 9), 'slash deleted');
   assert(!armedSurvives(6, doc + '\nnext', doc.length + 3), 'caret on a later line');
 }
+
+// Cmd/Ctrl+K only, without other modifiers or during composition.
+for (const [event, expected] of [
+  [{ key: 'k', metaKey: true }, true],
+  [{ key: 'K', ctrlKey: true }, true],
+  [{ key: 'k' }, false],
+  [{ key: 'k', metaKey: true, shiftKey: true }, false],
+  [{ key: 'k', ctrlKey: true, altKey: true }, false],
+  [{ key: 'k', metaKey: true, isComposing: true }, false],
+  [{ key: 'j', metaKey: true }, false],
+]) assert.equal(!!passageShortcut(event), expected, JSON.stringify(event));

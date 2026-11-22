@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { EditorState, StateField, StateEffect, Transaction } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType } from '@codemirror/view';
 import { history, undo, isolateHistory } from '@codemirror/commands';
-import { appSection, generateIn } from './app-source.mjs';
+import { appSection, appSource, generateIn } from './app-source.mjs';
 
 const draft = 'Opening.\n\n/Describe a quiet garden.\n\nEnding.';
 function setup(beforeDone = async () => {}) {
@@ -416,5 +416,9 @@ assert.equal(commands.requests.length, 0, 'no generation was started');
   test.review('Accept');
   assert.equal(test.view.state.doc.toString(), 'Opening.\n\n  - nested item\n\nEnding.');
 }
+
+// The editor says so when it stops a generation because the draft changed.
+assert.match(appSection('EditorView.updateListener.of(update => {\n        if (passage.job()', 'if (update.selectionSet && !update.docChanged) for (const ui of chatEditCards'),
+  /generate\.job\(\)\.signal\.aborted\) notify\('Generation stopped because the draft changed/);
 
 console.log('Generation checks passed: inline slash requests, R regeneration, concurrent edits, review and Undo.');
