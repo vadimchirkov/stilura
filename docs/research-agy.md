@@ -132,6 +132,19 @@
 
 ---
 
+### Отложено
+
+Незакрытые замечания reviewer-а (решение оператора: не делать сейчас):
+
+1. Вставка в середину армированной `/команды` не снимает armed (`extension/content.js`; Enter перепроверяет команду).
+2. P1 #18: лишний ретрай на prose-слове «Word»/«Text» (`pi.js`, обрезка по `stopReason === 'length'`).
+3. Нет теста ретрая `length` после mandatory-reasoning фолбэка (`pi.js`, `tests/pi-length.mjs`).
+4. P1 #17: нет теста на гонку `clear`/in-flight для дедупликации `GET /api/agent/status`.
+
+Также: `settled()` в `tests/files-browser.mjs` ждёт 300 мс тишины, на медленном CI может флакать; нужно ждать конкретного условия.
+
+---
+
 ## 4. Почему Claude Code не подключается в standalone-режиме Stilura (`npx stilura` / desktop)
 
 ### Воспроизведение
