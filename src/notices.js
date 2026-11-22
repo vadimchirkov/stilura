@@ -1,4 +1,4 @@
-import { chatEl } from './dom.js';
+import { el } from './dom.js';
 import { hydrateIcons } from './icons.js';
 
 // A provider's failure arrives as a status code and its own JSON, and pasting
@@ -118,21 +118,21 @@ export function createNotices({ editFeedback, noticeLive, chatPanel, chatInput, 
     clearTimeout(noticeTimer);
     editFeedback.replaceChildren();
     if (icon) {
-      const badge = chatEl('span', 'ph notice-icon', '');
+      const badge = el('span', 'ph notice-icon', '');
       badge.dataset.icon = icon;
       badge.setAttribute('aria-hidden', 'true');
       editFeedback.append(badge);
     }
-    const message = chatEl('span', '', text);
+    const message = el('span', '', text);
     message.title = detail || text;
     editFeedback.append(message);
     if (action) {
-      const run = chatEl('button', 'edit-feedback-undo', label);
+      const run = el('button', 'edit-feedback-undo', label);
       run.type = 'button';
       run.addEventListener('click', () => { notify(''); action(); });
       editFeedback.append(run);
     }
-    const close = chatEl('button', 'edit-feedback-close', '×');
+    const close = el('button', 'edit-feedback-close', '×');
     close.type = 'button';
     close.setAttribute('aria-label', 'Hide notice');
     close.addEventListener('click', () => { notify(''); focusEditor(); });

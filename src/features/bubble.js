@@ -1,6 +1,6 @@
 import { clampBubble } from '../../editing.js';
 import { ignoreMarker } from '../../spellcheck.js';
-import { chatEl } from '../dom.js';
+import { el } from '../dom.js';
 
 // ── Mark bubble ──
 //
@@ -120,7 +120,7 @@ export function createBubble({ element, getView, openPassage, recheckSpelling })
   new ResizeObserver(reanchorBubble).observe(document.getElementById('pane-work'));
 
   function bubbleButton(label, run) {
-    const button = chatEl('button', 'mark-bubble-seg', label);
+    const button = el('button', 'mark-bubble-seg', label);
     button.type = 'button';
     button.addEventListener('click', () => { hideMarkBubble(); run(); getView().focus(); });
     return button;
@@ -132,7 +132,7 @@ export function createBubble({ element, getView, openPassage, recheckSpelling })
     // A mark click owns the bubble when the click lands on one; a bare
     // selection opens its own local instruction field.
     bubbleMode = 'selection';
-    const actions = chatEl('div', 'mark-bubble-actions');
+    const actions = el('div', 'mark-bubble-actions');
     actions.append(bubbleButton('Change', () => {
       const live = getView().state.selection.main;
       if (live.empty) return;
@@ -154,7 +154,7 @@ export function createBubble({ element, getView, openPassage, recheckSpelling })
   const SPELL_SUGGESTIONS = 4;
   function showSpellBubble(marker, x, y) {
     bubbleMode = 'spell';
-    const actions = chatEl('div', 'mark-bubble-actions');
+    const actions = el('div', 'mark-bubble-actions');
     const replace = suggestion => {
       if (getView().state.sliceDoc(marker.from, marker.to) !== marker.quote) return;
       getView().dispatch({ changes: { from: marker.from, to: marker.to, insert: suggestion }, userEvent: 'input.spellfix' });

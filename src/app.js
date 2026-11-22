@@ -36,7 +36,7 @@ import { focusMode, setFocusMode } from './editor/focus.js';
 import { clearGhostFx, ghostField, ghostClear, ghostAccept } from './editor/ghost.js';
 import { spellMarkerField, createSpelling } from './editor/spelling.js';
 import { combobox, setOptions, fieldValue } from './combobox.js';
-import { chatEl } from './dom.js';
+import { el } from './dom.js';
 import { safeJson, formatFileSize, timeAgo } from './format.js';
 import { api } from './api.js';
 import { createDocumentState } from './document-state.js';
@@ -1193,7 +1193,7 @@ function restoreChat() {
   if (!Array.isArray(messages)) return;
   chatHistory = messages.filter(message => message && ['user', 'assistant'].includes(message.role) && typeof message.content === 'string').slice(-20);
   for (const message of chatHistory) {
-    if (message.role === 'user') streamAppend(chatEl('div', 'chat-entry is-user', message.display ?? message.content));
+    if (message.role === 'user') streamAppend(el('div', 'chat-entry is-user', message.display ?? message.content));
     else {
       message.edits = Array.isArray(message.edits) ? message.edits.filter(edit => edit && typeof edit.quote === 'string' && typeof edit.replacement === 'string' && typeof edit.label === 'string').slice(0, 8) : [];
       for (const edit of message.edits) {
@@ -1201,7 +1201,7 @@ function restoreChat() {
           if (edit.state !== 'unlocated') edit.state = 'stale';
         }
       }
-      renderChatAnswer(streamAppend(chatEl('div', 'chat-entry is-agent is-markdown')), message);
+      renderChatAnswer(streamAppend(el('div', 'chat-entry is-agent is-markdown')), message);
     }
   }
   // Folded into the pill by default: history is kept and reopens with it,
@@ -1215,13 +1215,13 @@ function renderChatAnswer(reply, message) {
   for (const edit of message.edits || []) reply.append(chatEditCard(edit));
 }
 function chatEditCard(edit) {
-  const card = chatEl('section', 'chat-edit-card');
+  const card = el('section', 'chat-edit-card');
   card.setAttribute('aria-label', edit.label);
-  card.append(chatEl('strong', 'chat-edit-title', edit.label));
-  card.append(chatEl('p', 'chat-edit-replacement', edit.replacement || '(Remove this passage)'));
-  const actions = chatEl('div', 'chat-edit-actions');
+  card.append(el('strong', 'chat-edit-title', edit.label));
+  card.append(el('p', 'chat-edit-replacement', edit.replacement || '(Remove this passage)'));
+  const actions = el('div', 'chat-edit-actions');
   const button = (name, handler) => {
-    const node = chatEl('button', 'review-action', name); node.type = 'button';
+    const node = el('button', 'review-action', name); node.type = 'button';
     node.addEventListener('click', handler); actions.append(node); return node;
   };
   const preview = button('Preview', () => {
@@ -1239,9 +1239,9 @@ function chatEditCard(edit) {
   const keep = button('Keep original', () => { clearPlainPreview(); edit.state = 'kept'; saveChat(); syncChatEditCards(); undo.focus(); });
   // Undo speaks the same receipt language as applied variants: one quiet pill
   // in its own footer row, not another button in the action row.
-  const undoFoot = chatEl('div', 'variant-undo-row');
+  const undoFoot = el('div', 'variant-undo-row');
   undoFoot.hidden = true;
-  const undo = chatEl('button', 'chat-action', 'Undo');
+  const undo = el('button', 'chat-action', 'Undo');
   undo.type = 'button';
   undo.title = 'Put the passage back as it was';
   undo.addEventListener('click', () => {
@@ -1259,7 +1259,7 @@ function chatEditCard(edit) {
     changeChatEdit(edit);
   });
   retarget.classList.add('is-primary');
-  const status = chatEl('p', 'chat-edit-status'); status.setAttribute('role', 'status');
+  const status = el('p', 'chat-edit-status'); status.setAttribute('role', 'status');
   actions.prepend(status);
   card.append(actions, undoFoot);
   chatEditCards.set(edit, { card, actions, preview, apply, keep, undo, undoFoot, retarget, status });
@@ -1791,7 +1791,7 @@ function noteExcerpt(note) {
 }
 
 function noteCard(note) {
-  const card = chatEl('div', 'note-card');
+  const card = el('div', 'note-card');
   card.dataset.noteId = note.id;
   card.tabIndex = 0;
   card.setAttribute('aria-label', 'Margin note. Press Enter to edit.');
@@ -1826,40 +1826,40 @@ function renderNoteCard(note, card = noteCards.get(note.id)) {
   // the context — just the text. In the stream there is no beside, so the
   // quote travels with it; a document note names the whole draft instead.
   const scope = note.para === null ? 'Whole draft' : noteExcerpt(note);
-  if (inStream || note.para === null) card.append(chatEl('div', 'note-quote', note.para === null ? scope : `“${scope}”`));
-  const body = chatEl('div', 'note-text', note.text);
+  if (inStream || note.para === null) card.append(el('div', 'note-quote', note.para === null ? scope : `“${scope}”`));
+  const body = el('div', 'note-text', note.text);
   body.addEventListener('click', event => { event.stopPropagation(); editNoteCard(note.id); });
   // The × stands inline, right after the last word: it is where the eye
   // finishes reading, instead of a corner of a box that has no visible edge.
-  const del = chatEl('button', 'note-del', '×');
+  const del = el('button', 'note-del', '×');
   del.type = 'button';
   del.setAttribute('aria-label', 'Delete note');
   del.title = 'Delete note';
   del.addEventListener('click', event => { event.stopPropagation(); deleteNote(note.id); });
   body.append(del);
   if (note.resolved && work) {
-    const completed = chatEl('details', 'note-completed');
-    completed.append(chatEl('summary', '', 'Completed note'), body); card.append(completed);
+    const completed = el('details', 'note-completed');
+    completed.append(el('summary', '', 'Completed note'), body); card.append(completed);
   } else card.append(body);
-  if (note.drifted) card.append(chatEl('div', 'note-meta', 'text changed — check this note'));
+  if (note.drifted) card.append(el('div', 'note-meta', 'text changed — check this note'));
   if (work) {
     const labels = { queued: 'Queued', working: 'Agent writing', review: 'Review changes', done: 'Done', reverted: 'Reverted', blocked: 'Needs input' };
-    const status = chatEl('div', 'note-meta', labels[work.status] || 'Queued');
+    const status = el('div', 'note-meta', labels[work.status] || 'Queued');
     status.setAttribute('role', 'status'); card.append(status);
-    if (work.error) card.append(chatEl('div', 'note-meta', work.error));
+    if (work.error) card.append(el('div', 'note-meta', work.error));
     for (const attempt of work.attempts || []) {
-      const details = chatEl('details', 'note-work-result');
-      details.append(chatEl('summary', '', attempt === latest ? 'Agent result' : 'Previous result'));
-      if (attempt.comment) details.append(chatEl('p', '', attempt.comment));
+      const details = el('details', 'note-work-result');
+      details.append(el('summary', '', attempt === latest ? 'Agent result' : 'Previous result'));
+      if (attempt.comment) details.append(el('p', '', attempt.comment));
       for (const edit of attempt.edits) {
-        details.append(chatEl('del', 'note-before', edit.before), chatEl('ins', 'note-after', edit.after));
+        details.append(el('del', 'note-before', edit.before), el('ins', 'note-after', edit.after));
       }
       card.append(details);
     }
-    for (const message of work.messages || []) card.append(chatEl('p', 'note-feedback', message.text));
-    const actions = chatEl('div', 'note-work-actions');
+    for (const message of work.messages || []) card.append(el('p', 'note-feedback', message.text));
+    const actions = el('div', 'note-work-actions');
     const button = (label, type, extra = {}) => {
-      const el = chatEl('button', 'chat-action', label); el.type = 'button';
+      const el = el('button', 'chat-action', label); el.type = 'button';
       el.addEventListener('click', () => updateNoteWork(note.id, type, extra)); actions.append(el);
       return el;
     };
@@ -2248,25 +2248,25 @@ function renderBriefQuestion() {
   if (!briefSession) return;
   briefSession.card?.remove();
   const step = (positionBrief?.questions || BRIEF_STEPS)[briefSession.step];
-  const card = chatEl('div', 'chat-entry is-agent brief-card');
-  const head = chatEl('div', 'brief-head');
-  head.append(chatEl('span', 'brief-kicker', 'Positioning brief'));
-  head.append(chatEl('span', 'brief-step', `${briefSession.step + 1} of ${BRIEF_STEPS.length}`));
+  const card = el('div', 'chat-entry is-agent brief-card');
+  const head = el('div', 'brief-head');
+  head.append(el('span', 'brief-kicker', 'Positioning brief'));
+  head.append(el('span', 'brief-step', `${briefSession.step + 1} of ${BRIEF_STEPS.length}`));
   card.append(head);
-  card.append(chatEl('p', 'brief-question', briefSession.loading ? 'Preparing questions for your draft…' : step.question));
-  const options = chatEl('div', 'brief-options');
+  card.append(el('p', 'brief-question', briefSession.loading ? 'Preparing questions for your draft…' : step.question));
+  const options = el('div', 'brief-options');
   options.setAttribute('role', 'group');
   options.setAttribute('aria-label', step.question);
   for (const option of briefSession.loading ? [] : step.options) {
-    const pick = chatEl('button', 'brief-option', option);
+    const pick = el('button', 'brief-option', option);
     pick.type = 'button';
     pick.addEventListener('click', () => answerBriefStep(option));
     options.append(pick);
   }
   card.append(options);
-  const foot = chatEl('div', 'brief-foot');
-  foot.append(chatEl('span', 'variant-hint', briefSession.loading ? '' : 'Or type your own answer below.'));
-  const skip = chatEl('button', 'brief-skip', 'Skip for now');
+  const foot = el('div', 'brief-foot');
+  foot.append(el('span', 'variant-hint', briefSession.loading ? '' : 'Or type your own answer below.'));
+  const skip = el('button', 'brief-skip', 'Skip for now');
   skip.type = 'button';
   skip.addEventListener('click', () => cancelBrief());
   foot.append(skip);
@@ -2302,18 +2302,18 @@ function finishBrief() {
 }
 
 function renderBriefSummary() {
-  const card = chatEl('div', 'chat-entry is-agent brief-card');
-  const head = chatEl('div', 'brief-head');
-  head.append(chatEl('span', 'brief-kicker', 'Positioning brief'));
-  if (positionBrief.updatedAt) head.append(chatEl('span', 'brief-step', new Date(positionBrief.updatedAt).toLocaleDateString()));
+  const card = el('div', 'chat-entry is-agent brief-card');
+  const head = el('div', 'brief-head');
+  head.append(el('span', 'brief-kicker', 'Positioning brief'));
+  if (positionBrief.updatedAt) head.append(el('span', 'brief-step', new Date(positionBrief.updatedAt).toLocaleDateString()));
   card.append(head);
-  const rows = chatEl('div', 'brief-rows');
+  const rows = el('div', 'brief-rows');
   for (let index = 0; index < BRIEF_STEPS.length; index++) {
     const step = BRIEF_STEPS[index];
-    const row = chatEl('div', 'brief-row');
-    row.append(chatEl('span', 'brief-label', step.label));
-    row.append(chatEl('span', 'brief-value', positionBrief[step.key]));
-    const edit = chatEl('button', 'brief-edit', 'Edit');
+    const row = el('div', 'brief-row');
+    row.append(el('span', 'brief-label', step.label));
+    row.append(el('span', 'brief-value', positionBrief[step.key]));
+    const edit = el('button', 'brief-edit', 'Edit');
     edit.type = 'button';
     edit.setAttribute('aria-label', `Edit ${step.label.toLowerCase()}`);
     edit.addEventListener('click', () => {
@@ -2326,9 +2326,9 @@ function renderBriefSummary() {
     rows.append(row);
   }
   card.append(rows);
-  if (positionBrief.direction) card.append(chatEl('p', 'brief-value', positionBrief.direction));
+  if (positionBrief.direction) card.append(el('p', 'brief-value', positionBrief.direction));
   const meta = 'Used for suggestions, rewrites, chat and ideas. To update from chat: “For the whole draft: …”.';
-  card.append(chatEl('p', 'variant-hint', meta));
+  card.append(el('p', 'variant-hint', meta));
   chatAdd(card);
 }
 
@@ -2521,22 +2521,22 @@ function renderSlashMenu() {
   const matched = slashMatches();
   slashMenu.replaceChildren();
   if (!matched.length) {
-    slashMenu.append(chatEl('p', 'slash-empty', 'No matching command — try /brief.'));
+    slashMenu.append(el('p', 'slash-empty', 'No matching command — try /brief.'));
   } else {
     if (slashActive < 0 || slashActive >= matched.length) slashActive = 0;
     matched.forEach((item, index) => {
-      const row = chatEl('button', 'slash-item' + (index === slashActive ? ' is-active' : ''));
+      const row = el('button', 'slash-item' + (index === slashActive ? ' is-active' : ''));
       row.type = 'button';
       row.id = `slash-item-${index}`;
       row.setAttribute('role', 'option');
       row.setAttribute('aria-selected', String(index === slashActive));
-      const badge = chatEl('span', 'slash-icon', '');
+      const badge = el('span', 'slash-icon', '');
       badge.innerHTML = icon(item.icon);
       badge.setAttribute('aria-hidden', 'true');
-      const text = chatEl('span', 'slash-text', '');
-      const name = chatEl('span', 'slash-name', item.title + ' ');
-      name.append(chatEl('span', 'slash-cmd', `/${item.name}`));
-      text.append(name, chatEl('span', 'slash-desc', item.desc));
+      const text = el('span', 'slash-text', '');
+      const name = el('span', 'slash-name', item.title + ' ');
+      name.append(el('span', 'slash-cmd', `/${item.name}`));
+      text.append(name, el('span', 'slash-desc', item.desc));
       row.append(badge, text);
       // Mousedown would blur the composer and hide the menu before the click
       // lands; the click then reads as leaving the field. Hold focus instead.
@@ -2576,7 +2576,7 @@ async function chatSend() {
     if (!text) return;
     chatInput.value = '';
     chatResize();
-    streamAppend(chatEl('div', 'chat-entry is-user', text));
+    streamAppend(el('div', 'chat-entry is-user', text));
     answerBriefStep(text);
     return;
   }
@@ -2584,7 +2584,7 @@ async function chatSend() {
   if (!await ensureAgent()) return;
   chatInput.value = '';
   chatResize();
-  chatAdd(chatEl('div', 'chat-entry is-user', text));
+  chatAdd(el('div', 'chat-entry is-user', text));
 
   chatHistory.push({ role: 'user', content: text });
   saveChat();
@@ -2592,8 +2592,8 @@ async function chatSend() {
 }
 
 function newReplyBubble() {
-  const reply = chatAdd(chatEl('div', 'chat-entry is-agent is-markdown'));
-  reply.append(chatEl('span', 'chat-caret'));
+  const reply = chatAdd(el('div', 'chat-entry is-agent is-markdown'));
+  reply.append(el('span', 'chat-caret'));
   return reply;
 }
 
@@ -3059,16 +3059,16 @@ function exportText(text, name = 'draft.md') {
 }
 function dialog(title) {
   const trigger = document.activeElement;
-  const modal = chatEl('dialog', 'settings-dialog document-dialog');
-  const heading = chatEl('h2', '', title);
+  const modal = el('dialog', 'settings-dialog document-dialog');
+  const heading = el('h2', '', title);
   heading.id = 'document-dialog-' + crypto.randomUUID();
   modal.setAttribute('aria-labelledby', heading.id);
   // Title left, one × right — the same header the settings dialog has. A
   // full-width `Close` button under the title read as the dialog's action.
-  const close = chatEl('button', 'dialog-close', '×');
+  const close = el('button', 'dialog-close', '×');
   close.setAttribute('aria-label', 'Close');
   close.addEventListener('click', () => modal.close());
-  const head = chatEl('header', '');
+  const head = el('header', '');
   head.append(heading, close);
   modal.append(head);
   document.body.append(modal);
@@ -3225,7 +3225,7 @@ function renderDriftDiff() {
     // whole document reprinted around them.
     if (op.type === 'keep' && text.length > 400) text = text.slice(0, 200) + ' ⋯ ' + text.slice(-200);
     if (shown + text.length > 30000) {
-      driftDiffBody.append(chatEl('p', 'drift-diff-more', '… further differences truncated'));
+      driftDiffBody.append(el('p', 'drift-diff-more', '… further differences truncated'));
       break;
     }
     shown += text.length;
@@ -3237,7 +3237,7 @@ function renderDriftDiff() {
       driftDiffBody.append(mark);
     }
   }
-  const legend = chatEl('p', 'drift-legend', 'Struck text lives only on disk · highlighted text only in your copy');
+  const legend = el('p', 'drift-legend', 'Struck text lives only on disk · highlighted text only in your copy');
   driftDiffBody.prepend(legend);
 }
 document.getElementById('drift-load').addEventListener('click', () => {
@@ -3471,11 +3471,11 @@ function renderFileList() {
   const shown = sidebarFiles.filter(file => !query || file.name.toLowerCase().includes(query));
   fileList.replaceChildren();
   if (!sidebarFiles.length) {
-    fileList.append(chatEl('li', 'file-list-empty', 'No Markdown or text files here yet.'));
+    fileList.append(el('li', 'file-list-empty', 'No Markdown or text files here yet.'));
     return;
   }
   if (!shown.length) {
-    fileList.append(chatEl('li', 'file-list-empty', 'Nothing matches this filter.'));
+    fileList.append(el('li', 'file-list-empty', 'Nothing matches this filter.'));
     return;
   }
   for (const file of shown) {
@@ -3486,15 +3486,15 @@ function renderFileList() {
     // The card shows name, age and excerpt; the size stays in the tooltip.
     row.title = `${file.name} · ${formatFileSize(file.size)}`;
     if (file.name === docState.documentName) row.setAttribute('aria-current', 'true');
-    const top = chatEl('span', 'file-card-top');
-    const name = chatEl('span', 'file-name', '');
+    const top = el('span', 'file-card-top');
+    const name = el('span', 'file-name', '');
     name.textContent = file.name;
-    const meta = chatEl('span', 'file-meta', '');
+    const meta = el('span', 'file-meta', '');
     meta.textContent = timeAgo(file.mtime);
     top.append(name, meta);
     row.append(top);
     if (file.excerpt) {
-      const excerpt = chatEl('span', 'file-excerpt', '');
+      const excerpt = el('span', 'file-excerpt', '');
       excerpt.textContent = file.excerpt;
       row.append(excerpt);
     }
@@ -3514,12 +3514,12 @@ function renderFileList() {
   }
 }
 function fileActions(file, item) {
-  const actions = chatEl('span', 'file-actions');
-  const toggle = chatEl('button', 'file-more', '⋯');
+  const actions = el('span', 'file-actions');
+  const toggle = el('button', 'file-more', '⋯');
   toggle.type = 'button';
   toggle.setAttribute('aria-label', `Actions for ${file.name}`);
   toggle.setAttribute('aria-expanded', 'false');
-  const panel = chatEl('span', 'file-action-panel');
+  const panel = el('span', 'file-action-panel');
   panel.setAttribute('popover', 'auto');
   toggle.popoverTargetElement = panel;
   panel.addEventListener('beforetoggle', event => {
@@ -3532,11 +3532,11 @@ function fileActions(file, item) {
       panel.style.top = `${Math.min(bounds.bottom + 4, window.innerHeight - 88)}px`;
     }
   });
-  const rename = chatEl('button', 'file-action', 'Rename');
+  const rename = el('button', 'file-action', 'Rename');
   rename.type = 'button';
   rename.autofocus = true;
   rename.addEventListener('click', () => { panel.hidePopover(); startRename(file, item); });
-  const remove = chatEl('button', 'file-action', 'Move to Trash');
+  const remove = el('button', 'file-action', 'Move to Trash');
   remove.type = 'button';
   remove.addEventListener('click', () => { panel.hidePopover(); deleteFile(file.name); });
   panel.append(rename, remove);
@@ -3547,7 +3547,7 @@ function fileActions(file, item) {
 // Renaming happens in place: Enter keeps the new name, Escape or leaving
 // the field keeps the old one.
 function startRename(file, item) {
-  const input = chatEl('input', 'file-rename');
+  const input = el('input', 'file-rename');
   Object.assign(input, { type: 'text', value: file.name, spellcheck: false });
   input.setAttribute('aria-label', `New name for ${file.name}`);
   item.classList.add('is-renaming');
@@ -3732,8 +3732,8 @@ document.getElementById('file-history').addEventListener('click', async () => {
   search.setAttribute('aria-label', 'Search versions');
   search.autocomplete = 'off';
   search.spellcheck = false;
-  const list = chatEl('div', 'history-list');
-  const toolbar = chatEl('div', 'history-toolbar');
+  const list = el('div', 'history-list');
+  const toolbar = el('div', 'history-toolbar');
   toolbar.append(search);
   modal.append(toolbar, list);
   search.focus();
@@ -3747,24 +3747,24 @@ document.getElementById('file-history').addEventListener('click', async () => {
     })).filter(({ item, match }) => !matchQuery || match || matchQuery.test(item.label || 'Saved to disk'));
     list.replaceChildren();
     for (const { item, newer, match } of shown) {
-      const row = chatEl('div', 'history-item');
+      const row = el('div', 'history-item');
       const words = item.text.match(/\S+/g)?.length ?? 0;
-      row.append(chatEl('div', 'history-when',
+      row.append(el('div', 'history-when',
         `${new Date(item.at).toLocaleString()} · ${item.label || 'Saved to disk'} · ${words} ${words === 1 ? 'word' : 'words'}`));
       if (match) {
         const matchEnd = match.index + match[0].length;
         const start = Math.max(0, match.index - 60);
         const end = Math.min(item.text.length, matchEnd + 90);
-        const excerpt = chatEl('div', 'history-match');
+        const excerpt = el('div', 'history-match');
         excerpt.append(
           (start ? '…' : '') + item.text.slice(start, match.index),
-          chatEl('mark', '', match[0]),
+          el('mark', '', match[0]),
           item.text.slice(matchEnd, end) + (end < item.text.length ? '…' : ''),
         );
         row.append(excerpt);
       }
       if (item.text !== newer) {
-        const diff = chatEl('div', 'history-diff');
+        const diff = el('div', 'history-diff');
         diff.setAttribute('aria-label', 'Changes in the next version');
         const ops = wordDiff(item.text, newer);
         const first = ops.findIndex(op => op.type !== 'keep');
@@ -3777,29 +3777,29 @@ document.getElementById('file-history').addEventListener('click', async () => {
             : text;
           const excerpt = context.slice(0, remaining);
           if (type === 'keep') diff.append(excerpt);
-          else diff.append(chatEl(type === 'del' ? 'del' : 'ins', type === 'del' ? 'drift-del' : 'drift-ins', excerpt));
+          else diff.append(el(type === 'del' ? 'del' : 'ins', type === 'del' ? 'drift-del' : 'drift-ins', excerpt));
           remaining -= excerpt.length;
           if (!remaining) { if (excerpt.length < context.length || index < last) diff.append('…'); break; }
         }
         row.append(diff);
       } else {
-        row.append(chatEl('div', 'history-current', 'No changes in the next version'));
+        row.append(el('div', 'history-current', 'No changes in the next version'));
       }
       if (item.text !== current) {
         const full = document.createElement('details');
-        const preview = chatEl('pre', 'passage-preview', '');
-        full.append(chatEl('summary', '', 'Full text'), preview);
+        const preview = el('pre', 'passage-preview', '');
+        full.append(el('summary', '', 'Full text'), preview);
         full.addEventListener('toggle', () => {
           if (full.open && !preview.textContent) preview.textContent = item.text;
         }, { once: true });
-        const restore = chatEl('button', '', 'Restore');
+        const restore = el('button', '', 'Restore');
         restore.addEventListener('click', () => { modal.close(); replaceDraft(item.text, 'Version restored'); });
         row.append(full, restore);
       }
       list.append(row);
     }
-    if (!versions.length) list.append(chatEl('p', '', 'No previous versions yet. One is kept before every save, import, and AI replacement.'));
-    else if (!shown.length) list.append(chatEl('p', '', 'Nothing matches this search.'));
+    if (!versions.length) list.append(el('p', '', 'No previous versions yet. One is kept before every save, import, and AI replacement.'));
+    else if (!shown.length) list.append(el('p', '', 'Nothing matches this search.'));
   }
   search.addEventListener('input', renderHistory);
   try {
@@ -3815,9 +3815,9 @@ document.getElementById('file-history').addEventListener('click', async () => {
     }
     versions = [...local, ...snapshots].sort((a, b) => b.at.localeCompare(a.at));
     renderHistory();
-    list.after(chatEl('small', 'history-note',
+    list.after(el('small', 'history-note',
       'Last 20 disk versions and 10 browser checkpoints. Disk copies sit beside the draft in .stilura-history and are never deleted automatically.'));
-  } catch (error) { list.append(chatEl('p', 'history-note', error.message)); }
+  } catch (error) { list.append(el('p', 'history-note', error.message)); }
 });
 
 // ─── Quick switcher ─── (src/features/switcher.js)

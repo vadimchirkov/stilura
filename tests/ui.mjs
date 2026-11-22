@@ -153,7 +153,7 @@ const section = appSection;
     const controller = new AbortController(), snapshots = [];
     let saved;
     const context = docContext({
-      document, workView, chatEl: node, chatEditCards: new Map(), chatRequests: new Set(),
+      document, workView, el: node, chatEditCards: new Map(), chatRequests: new Set(),
       chatHistory: [{ role: 'user', content: 'Tighten this.' }], chatAbort: null, changingChatEdit: null,
       loadingDocument: false, savePaused: false, plainPreview: null, positionBrief: null, EDITS_OPEN,
       locateChatEdits, mapChatEdit, chatEditMatches, chatVisibleText, renderMarkdown: text => text,
@@ -297,7 +297,7 @@ const section = appSection;
   const jobs = new Set();
   let briefs = 0, notice = '';
   const context = docContext({
-    document, chatInput: input, jobs, console, chatEl: node, icon: () => '',
+    document, chatInput: input, jobs, console, el: node, icon: () => '',
     chatResize() {}, clearNotice() {},
     startBrief() { briefs++; },
     notify(message) { notice = message; },
