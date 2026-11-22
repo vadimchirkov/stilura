@@ -38,6 +38,7 @@ import { spellMarkerField, createSpelling } from './editor/spelling.js';
 import { combobox, setOptions, fieldValue } from './combobox.js';
 import { el } from './dom.js';
 import { safeJson } from './format.js';
+import { limitSnapshots, pruneTabCopies, removeTabCopy, writeTabCopy } from './tab-copies.js';
 import { api } from './api.js';
 import { createDocumentState } from './document-state.js';
 import { createUpdateCheck } from './update.js';
@@ -173,8 +174,8 @@ try {
 } catch { tabId = crypto.randomUUID(); }
 const docStorage = {
   getItem(key) { try { return docState.documentKey ? (key === 'wa-working' ? localStorage.getItem(docState.documentKey + key + ':' + tabId) : null) ?? localStorage.getItem(docState.documentKey + key) : null; } catch { return null; } },
-  setItem(key, value) { try { if (docState.documentKey) { localStorage.setItem(docState.documentKey + key, value); if (key === 'wa-working') localStorage.setItem(docState.documentKey + key + ':' + tabId, value); } } catch { notify('Browser backup unavailable — keep this tab open until saved', { sticky: true, key: 'backup' }); } },
-  removeItem(key) { try { if (docState.documentKey) localStorage.removeItem(docState.documentKey + key); } catch {} },
+  setItem(key, value) { try { if (docState.documentKey) { localStorage.setItem(docState.documentKey + key, value); if (key === 'wa-working') writeTabCopy(localStorage, docState.documentKey, tabId, value); } } catch { notify('Browser backup unavailable — keep this tab open until saved', { sticky: true, key: 'backup' }); } },
+  removeItem(key) { try { if (docState.documentKey) { localStorage.removeItem(docState.documentKey + key); if (key === 'wa-working') removeTabCopy(localStorage, docState.documentKey, tabId); } } catch {} },
 };
 const jobs = new Set();
 // JSON in storage can be stale, truncated, or hand-edited. A corrupt value
@@ -3051,7 +3052,7 @@ function saveSnapshot(label) {
   const snapshots = safeJson(docStorage.getItem('snapshots'), []);
   if (!Array.isArray(snapshots)) return;
   snapshots.unshift({ text: workView.state.doc.toString(), at: new Date().toISOString(), label });
-  docStorage.setItem('snapshots', JSON.stringify(snapshots.slice(0, 10)));
+  docStorage.setItem('snapshots', JSON.stringify(limitSnapshots(snapshots)));
 }
 function exportText(text, name = 'draft.md') {
   const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
@@ -3258,6 +3259,7 @@ document.getElementById('drift-keep').addEventListener('click', () => {
 });
 function restoreDocument(current) {
   docState.documentKey = 'stilura:' + current.id + ':';
+  try { pruneTabCopies(localStorage, docState.documentKey, tabId); } catch {}
   docState.documentName = current.name ?? current.path.split(/[\\/]/).pop();
   // Capture the old baseline before installing the current disk revision.
   const driftBase = lastDiskBaseline();
