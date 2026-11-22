@@ -1375,13 +1375,6 @@ html, body {
   to   { opacity: 1; translate: 0 0; }
 }
 
-/* Soft way out, paired with fadeRemove(): fade first, detach after. */
-.is-leaving {
-  opacity: 0 !important;
-  transition: opacity .16s ease !important;
-  pointer-events: none !important;
-}
-
 /* Assistant message: standard card, chat-rise for gentler arrival. */
 .chat-entry:not(.is-user) {
   animation: chat-rise .22s var(--ease);

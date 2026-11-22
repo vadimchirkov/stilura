@@ -7,7 +7,7 @@ import { chatEl } from '../dom.js';
 // Letters of the query in order inside the name. Consecutive letters and
 // letters at a word start score higher, so "dr" ranks "draft" above "order".
 // -1 when the query does not fit.
-export function fuzzyScore(query, text) {
+function fuzzyScore(query, text) {
   let at = 0, score = 0, last = -2;
   for (let i = 0; i < text.length && at < query.length; i++) {
     if (text[i] !== query[at]) continue;
@@ -20,7 +20,7 @@ export function fuzzyScore(query, text) {
 
 // Files for a query: names that fit, best first; then files whose text
 // preview contains it. An empty query lists every file, most recent first.
-export function rankFiles(files, query) {
+function rankFiles(files, query) {
   const q = query.trim().toLowerCase();
   if (!q) return [...files].sort((a, b) => String(b.mtime).localeCompare(String(a.mtime)));
   const scored = [];

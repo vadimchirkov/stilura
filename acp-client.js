@@ -64,7 +64,7 @@ export function* executables(name, override) {
 }
 
 // Inherit account discovery and OS settings, without API keys, proxy endpoints or cloud routing overrides.
-export function authEnv() {
+function authEnv() {
   const keys = ['PATH', 'HOME', 'USER', 'LOGNAME', '__CF_USER_TEXT_ENCODING', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'SYSTEMROOT',
     'WINDIR', 'TMP', 'TEMP', 'TMPDIR', 'LANG', 'LC_ALL', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'CLAUDE_CONFIG_DIR'];
   return Object.fromEntries(keys.filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));

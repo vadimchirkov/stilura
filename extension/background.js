@@ -2,7 +2,6 @@ import { rememberPassageRequest } from './editor-ui.js';
 
 const protectedStorage = chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
 let passageHistoryWrite = Promise.resolve();
-const defaults = { server: 'http://127.0.0.1:3000', enabled: true, suggestions: true, agent: null };
 
 function localServer(value) {
   const url = new URL(value);

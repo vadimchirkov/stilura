@@ -29,7 +29,7 @@ class GhostWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
-export const setGhostFx   = StateEffect.define();
+const setGhostFx   = StateEffect.define();
 export const clearGhostFx = StateEffect.define();
 
 // Ghost state field — also provides decorations

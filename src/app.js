@@ -1188,22 +1188,6 @@ function chatScroll(stick, smooth = false) {
   chatStream.scrollTop = top;
 }
 
-// Bring a node into view without yanking when it is already fully visible.
-function scrollToNode(node, block = 'nearest') {
-  if (!node?.isConnected) return;
-  try { node.scrollIntoView({ block, behavior: reduceMotion() ? 'auto' : 'smooth' }); }
-  catch { try { node.scrollIntoView(); } catch {} }
-}
-
-// Soft way out: fade first, detach after. Bulk operations (document switch,
-// conversation reset) still remove instantly — one farewell at a time.
-function fadeRemove(node, ms = 160) {
-  if (!node?.isConnected) return;
-  if (reduceMotion()) { node.remove(); return; }
-  node.classList.add('is-leaving');
-  setTimeout(() => node.remove(), ms);
-}
-
 function saveChat() {
   docStorage.setItem('wa-chat', JSON.stringify({ document: workView.state.doc.toString(), messages: chatHistory.slice(-20) }));
 }

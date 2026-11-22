@@ -12,7 +12,7 @@ const dimmed = Decoration.line({ class: 'cm-focus-dim' });
 // The paragraph around `pos`: the run of non-blank lines that contains it.
 // A blank line is a paragraph of its own, so an empty line being typed into
 // keeps the rest of the draft dimmed.
-export function paragraphAt(doc, pos) {
+function paragraphAt(doc, pos) {
   let first = doc.lineAt(pos), last = first;
   if (!first.text.trim()) return { from: first.from, to: first.to };
   while (first.number > 1 && doc.line(first.number - 1).text.trim()) first = doc.line(first.number - 1);

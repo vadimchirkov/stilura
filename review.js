@@ -1,5 +1,3 @@
-export const WORD_RE = /\p{L}[\p{L}\p{N}'’-]*/gu;
-
 export function isLatinScript(text) {
   const letters = text.match(/\p{L}/gu);
   if (!letters?.length) return true;
