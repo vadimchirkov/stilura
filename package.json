@@ -28,6 +28,7 @@
   },
   "files": [
     "index.js",
+    "http-util.js",
     "tasks.js",
     "brief.js",
     "chat-edits.js",
